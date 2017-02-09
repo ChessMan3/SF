@@ -24,7 +24,8 @@
 #include <cstring>   // For std::memset
 #include <iostream>
 #include <sstream>
-
+#include "book.h"
+#include "tzbook.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -70,15 +71,16 @@ namespace {
   // Futility and reductions lookup tables, initialized at startup
   int FutilityMoveCounts[2][16]; // [improving][depth]
   int Reductions[2][2][64][64];  // [pv][improving][depth][moveNumber]
-
+  int CMH = 128;
+  
   template <bool PvNode> Depth reduction(bool i, Depth d, int mn) {
     return Reductions[PvNode][i][std::min(d / ONE_PLY, 63)][std::min(mn, 63)] * ONE_PLY;
   }
-
+	
   // History and stats update bonus, based on depth
-  Value stat_bonus(Depth depth) {
-    int d = depth / ONE_PLY ;
-    return Value(d * d + 2 * d - 2);
+   Value stat_bonus(Depth depth) {
+     int d = depth / ONE_PLY ;
+     return Value(d * d + 2 * d - 2);
   }
 
   // Skill structure is used to implement strength limit
@@ -176,6 +178,12 @@ namespace {
   void update_cm_stats(Stack* ss, Piece pc, Square s, Value bonus);
   void update_stats(const Position& pos, Stack* ss, Move move, Move* quiets, int quietsCnt, Value bonus);
   void check_time();
+	
+	
+  int reductionThreshold = 6;
+  int reductionFactor = 17;
+
+  int LMR = 20000;
 
 } // namespace
 
@@ -203,7 +211,10 @@ void Search::init() {
       FutilityMoveCounts[0][d] = int(2.4 + 0.773 * pow(d + 0.00, 1.8));
       FutilityMoveCounts[1][d] = int(2.9 + 1.045 * pow(d + 0.49, 1.8));
   }
+      CMH = int(Options["CMH"]);
 }
+
+
 
 
 /// Search::clear() resets search state to zero, to obtain reproducible results
@@ -257,7 +268,7 @@ template uint64_t Search::perft<true>(Position&, Depth);
 /// the UCI 'go' command. It searches from the root position and outputs the "bestmove".
 
 void MainThread::search() {
-
+static PolyglotBook book; // Defined static to initialize the PRNG only once
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
 
@@ -274,18 +285,43 @@ void MainThread::search() {
   }
   else
   {
-      for (Thread* th : Threads)
-          if (th != this)
-              th->start_searching();
+	   if (Options["OwnBook"] && !Limits.infinite && !Limits.mate)
+      {
+          Move bookMove = book.probe(rootPos, Options["Book File"], Options["Best Book Line"]);
 
-      Thread::search(); // Let's start searching!
+          if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+          {
+              std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+              goto finalize;
+          }
+      }
+      Move bookMove = MOVE_NONE;
+
+      if (!Limits.infinite && !Limits.mate)
+          bookMove = tzbook.probe2(rootPos);
+
+      if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+      {
+          std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+          for (Thread* th : Threads)
+              if (th != this)
+                 std::swap(th->rootMoves[0], *std::find(th->rootMoves.begin(), th->rootMoves.end(), bookMove));
+      }
+      else
+      {
+          for (Thread* th : Threads)
+              if (th != this)
+                  th->start_searching();
+
+          Thread::search(); // Let's start searching!
+      }
   }
 
   // When playing in 'nodes as time' mode, subtract the searched nodes from
   // the available ones before exiting.
   if (Limits.npmsec)
       Time.availableNodes += Limits.inc[us] - Threads.nodes_searched();
-
+finalize:
   // When we reach the maximum depth, we can arrive here without a raise of
   // Signals.stop. However, if we are pondering or in an infinite search,
   // the UCI protocol states that we shouldn't print the best move before the
@@ -366,7 +402,8 @@ void Thread::search() {
 
   size_t multiPV = Options["MultiPV"];
   Skill skill(Options["Skill Level"]);
-
+  if (Options["Study"]) multiPV=256;
+	
   // When playing with strength handicap enable MultiPV search that we will
   // use behind the scenes to retrieve a set of possible moves.
   if (skill.enabled())
@@ -482,6 +519,13 @@ void Thread::search() {
       // If skill level is enabled and time is up, pick a sub-optimal best move
       if (skill.enabled() && skill.time_to_pick(rootDepth))
           skill.pick_best(multiPV);
+	  
+	   if (Options["Fast_Play"])
+ 	    {
+ 		  if ( Time.elapsed() > Time.optimum() / 256
+ 			  && ( abs(bestValue) > 12300 ||  abs(bestValue) >= VALUE_MATE_IN_MAX_PLY ))
+ 		    Signals.stop = true;
+ 	    }
 
       // Have we found a "mate in x"?
       if (   Limits.mate
@@ -505,7 +549,7 @@ void Thread::search() {
 
               bool doEasyMove =   rootMoves[0].pv[0] == easyMove
                                && mainThread->bestMoveChanges < 0.03
-                               && Time.elapsed() > Time.optimum() * 5 / 42;
+                               && Time.elapsed() > Time.optimum() * 5 / 44;
 
               if (   rootMoves.size() == 1
                   || Time.elapsed() > Time.optimum() * unstablePvFactor * improvingFactor / 628
@@ -647,22 +691,22 @@ namespace {
         // If ttMove is quiet, update move sorting heuristics on TT hit
         if (ttMove)
         {
-            if (ttValue >= beta)
-            {
-                if (!pos.capture_or_promotion(ttMove))
-                    update_stats(pos, ss, ttMove, nullptr, 0, stat_bonus(depth));
+           if (ttValue >= beta)
+             {
+                 if (!pos.capture_or_promotion(ttMove))
+                     update_stats(pos, ss, ttMove, nullptr, 0, stat_bonus(depth));
 
-                // Extra penalty for a quiet TT move in previous ply when it gets refuted
-                if ((ss-1)->moveCount == 1 && !pos.captured_piece())
-                    update_cm_stats(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
-            }
-            // Penalty for a quiet ttMove that fails low
-            else if (!pos.capture_or_promotion(ttMove))
-            {
-                Value penalty = -stat_bonus(depth + ONE_PLY);
-                thisThread->history.update(pos.side_to_move(), ttMove, penalty);
-                update_cm_stats(ss, pos.moved_piece(ttMove), to_sq(ttMove), penalty);
-            }
+           // Extra penalty for a quiet TT move in previous ply when it gets refuted
+                 if ((ss-1)->moveCount == 1 && !pos.captured_piece())
+                     update_cm_stats(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
+             }
+             // Penalty for a quiet ttMove that fails low
+             else if (!pos.capture_or_promotion(ttMove))
+             {
+                 Value penalty = -stat_bonus(depth + ONE_PLY);
+                 thisThread->history.update(pos.side_to_move(), ttMove, penalty);
+                 update_cm_stats(ss, pos.moved_piece(ttMove), to_sq(ttMove), penalty);
+             }
         }
         return ttValue;
     }
@@ -966,7 +1010,6 @@ moves_loop: // When in check search starts from here
           ss->moveCount = --moveCount;
           continue;
       }
-
       // Update the current move (this must be done after singular extension search)
       ss->currentMove = move;
       ss->counterMoves = &thisThread->counterMoveHistory[moved_piece][to_sq(move)];
@@ -1137,7 +1180,7 @@ moves_loop: // When in check search starts from here
 
         // Extra penalty for a quiet TT move in previous ply when it gets refuted
         if ((ss-1)->moveCount == 1 && !pos.captured_piece())
-            update_cm_stats(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
+           update_cm_stats(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
     }
     // Bonus for prior countermove that caused the fail low
     else if (    depth >= 3 * ONE_PLY
