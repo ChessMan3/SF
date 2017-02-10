@@ -25,6 +25,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "tzbook.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -70,15 +71,14 @@ namespace {
   // Futility and reductions lookup tables, initialized at startup
   int FutilityMoveCounts[2][16]; // [improving][depth]
   int Reductions[2][2][64][64];  // [pv][improving][depth][moveNumber]
-
   template <bool PvNode> Depth reduction(bool i, Depth d, int mn) {
     return Reductions[PvNode][i][std::min(d / ONE_PLY, 63)][std::min(mn, 63)] * ONE_PLY;
   }
-
+	
   // History and stats update bonus, based on depth
-  Value stat_bonus(Depth depth) {
-    int d = depth / ONE_PLY ;
-    return Value(d * d + 2 * d - 2);
+   Value stat_bonus(Depth depth) {
+     int d = depth / ONE_PLY ;
+     return Value(d * d + 2 * d - 2);
   }
 
   // Skill structure is used to implement strength limit
@@ -161,7 +161,8 @@ namespace {
 
   const size_t HalfDensitySize = std::extent<decltype(HalfDensity)>::value;
 
-  EasyMoveManager EasyMove;
+  EasyMoveManager EasyMove; 
+  bool study = Options["Study"];
   Value DrawValue[COLOR_NB];
 
   template <NodeType NT>
@@ -177,8 +178,8 @@ namespace {
   void update_stats(const Position& pos, Stack* ss, Move move, Move* quiets, int quietsCnt, Value bonus);
   void check_time();
 
-} // namespace
 
+} // namespace
 
 /// Search::init() is called during startup to initialize various lookup tables
 
@@ -203,13 +204,13 @@ void Search::init() {
       FutilityMoveCounts[0][d] = int(2.4 + 0.773 * pow(d + 0.00, 1.8));
       FutilityMoveCounts[1][d] = int(2.9 + 1.045 * pow(d + 0.49, 1.8));
   }
+
 }
 
 
 /// Search::clear() resets search state to zero, to obtain reproducible results
 
 void Search::clear() {
-
   TT.clear();
 
   for (Thread* th : Threads)
@@ -274,11 +275,30 @@ void MainThread::search() {
   }
   else
   {
-      for (Thread* th : Threads)
-          if (th != this)
-              th->start_searching();
 
-      Thread::search(); // Let's start searching!
+
+      Move bookMove = MOVE_NONE;
+
+
+
+      if (!Limits.infinite && !Limits.mate)
+          bookMove = tzbook.probe2(rootPos);
+
+      if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+      {
+          std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+          for (Thread* th : Threads)
+              if (th != this)
+                 std::swap(th->rootMoves[0], *std::find(th->rootMoves.begin(), th->rootMoves.end(), bookMove));
+      }
+      else
+      {
+          for (Thread* th : Threads)
+              if (th != this)
+                  th->start_searching();
+
+          Thread::search(); // Let's start searching!
+      }
   }
 
   // When playing in 'nodes as time' mode, subtract the searched nodes from
@@ -505,7 +525,7 @@ void Thread::search() {
 
               bool doEasyMove =   rootMoves[0].pv[0] == easyMove
                                && mainThread->bestMoveChanges < 0.03
-                               && Time.elapsed() > Time.optimum() * 5 / 42;
+                               && Time.elapsed() > Time.optimum() * 5 / 44;
 
               if (   rootMoves.size() == 1
                   || Time.elapsed() > Time.optimum() * unstablePvFactor * improvingFactor / 628
@@ -649,6 +669,7 @@ namespace {
         {
             if (ttValue >= beta)
             {
+
                 if (!pos.capture_or_promotion(ttMove))
                     update_stats(pos, ss, ttMove, nullptr, 0, stat_bonus(depth));
 
@@ -656,13 +677,16 @@ namespace {
                 if ((ss-1)->moveCount == 1 && !pos.captured_piece())
                     update_cm_stats(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
             }
+
             // Penalty for a quiet ttMove that fails low
             else if (!pos.capture_or_promotion(ttMove))
             {
+
                 Value penalty = -stat_bonus(depth + ONE_PLY);
                 thisThread->history.update(pos.side_to_move(), ttMove, penalty);
                 update_cm_stats(ss, pos.moved_piece(ttMove), to_sq(ttMove), penalty);
             }
+
         }
         return ttValue;
     }
@@ -1014,6 +1038,9 @@ moves_loop: // When in check search starts from here
               r = std::max(DEPTH_ZERO, (r / ONE_PLY - ss->history / 20000) * ONE_PLY);
           }
 
+          if (study && ss->ply < depth / 2 - ONE_PLY)
+              r = DEPTH_ZERO;
+	      
           Depth d = std::max(newDepth - r, ONE_PLY);
 
           value = -search<NonPV>(pos, ss+1, -(alpha+1), -alpha, d, true, false);
