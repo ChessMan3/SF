@@ -26,7 +26,18 @@
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
+#ifdef SYZYGY_TB
 #include "syzygy/tbprobe.h"
+
+#endif
+#ifdef LOMONOSOV_TB
+#include "lmtb.h"
+#endif
+
+#ifdef LARGEPAGES
+void SETUP_PRIVILEGES();
+void FREE_MEM(void *);
+#endif
 
 namespace PSQT {
   void init();
@@ -35,8 +46,14 @@ namespace PSQT {
 int main(int argc, char* argv[]) {
 
   std::cout << engine_info() << std::endl;
+  #ifdef LARGEPAGES
+    #ifndef BENCH
+      SETUP_PRIVILEGES();
+    #endif
+  #endif
 
   UCI::init(Options);
+  TT.resize(Options["Hash"]);
   PSQT::init();
   Bitboards::init();
   Position::init();
@@ -44,11 +61,32 @@ int main(int argc, char* argv[]) {
   Search::init();
   Pawns::init();
   Threads.init();
-  Tablebases::init(Options["SyzygyPath"]);
-  TT.resize(Options["Hash"]);
+  
+  #ifdef SYZYGY_TB
+	  Tablebases::init(Options["SyzygyPath"]);
+#endif
+
+#ifdef LOMONOSOV_TB
+  //init Lomonosov TB
+  int load_dll = -1;
+  if ((load_dll = load_lomonosov_tb()) == 0) {
+	  Search::lomonosov_tb_loaded = true;
+	  std::cout << "Lomonosov tables loaded" << std::endl;
+  }
+  else {
+	  Search::lomonosov_tb_loaded = false;
+	  std::cout << "Lomonosov tables not loaded" << std::endl;
+  }
+#endif
 
   UCI::loop(argc, argv);
-
+#ifdef LARGEPAGES
+  if (large_use) {
+    FREE_MEM(TT.mem);  
+    TT.mem = nullptr;
+  }
+#endif
+  
   Threads.exit();
   return 0;
 }
