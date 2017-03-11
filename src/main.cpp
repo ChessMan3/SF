@@ -26,6 +26,7 @@
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
+
 #ifdef SYZYGY_TB
 #include "syzygy/tbprobe.h"
 
