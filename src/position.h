@@ -79,6 +79,10 @@ public:
   Position& set(const std::string& code, Color c, StateInfo* si);
   const std::string fen() const;
 
+#ifdef LOMONOSOV_TB
+  void lomonosov_position(int *side, unsigned int *psqW, unsigned int *psqB, int *piCount, int *sqEnP);
+#endif
+
   // Position representation
   Bitboard pieces() const;
   Bitboard pieces(PieceType pt) const;
