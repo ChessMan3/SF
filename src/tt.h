@@ -52,7 +52,7 @@ struct TTEntry {
 
     // Don't overwrite more valuable entries
     if (  (k >> 48) != key16
-        || d / ONE_PLY > depth8 - 4
+        || d / ONE_PLY > depth8 - 2
      /* || g != (genBound8 & 0xFC) // Matching non-zero keys are already refreshed by probe() */
         || b == BOUND_EXACT)
     {
@@ -82,6 +82,10 @@ private:
 /// divide the size of a cache line size, to ensure that clusters never cross
 /// cache lines. This ensures best cache performance, as the cacheline is
 /// prefetched, as soon as possible.
+#ifdef LARGEPAGES
+extern int large_use;
+void FREE_MEM (void *);
+#endif
 
 class TranspositionTable {
 
@@ -96,7 +100,12 @@ class TranspositionTable {
   static_assert(CacheLineSize % sizeof(Cluster) == 0, "Cluster size incorrect");
 
 public:
+    void* mem;
+#ifdef LARGEPAGES
+ ~TranspositionTable() { large_use ? FREE_MEM (mem) : free(mem); }
+#else
  ~TranspositionTable() { free(mem); }
+#endif
   void new_search() { generation8 += 4; } // Lower 2 bits are used by Bound
   uint8_t generation() const { return generation8; }
   TTEntry* probe(const Key key, bool& found) const;
@@ -112,7 +121,6 @@ public:
 private:
   size_t clusterCount;
   Cluster* table;
-  void* mem;
   uint8_t generation8; // Size must be not bigger than TTEntry::genBound8
 };
 
