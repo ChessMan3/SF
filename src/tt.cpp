@@ -25,12 +25,14 @@
 #include "tt.h"
 
 TranspositionTable TT; // Our global transposition table
-
-
+#ifdef LARGEPAGES
+void CREATE_MEM2(void **,uint64_t);
+void FREE_MEM(void *);
+#endif
 /// TranspositionTable::resize() sets the size of the transposition table,
 /// measured in megabytes. Transposition table consists of a power of 2 number
 /// of clusters and each cluster consists of ClusterSize number of TTEntry.
-
+#if 0
 void TranspositionTable::resize(size_t mbSize) {
 
   size_t newClusterCount = size_t(1) << msb((mbSize * 1024 * 1024) / sizeof(Cluster));
@@ -39,10 +41,19 @@ void TranspositionTable::resize(size_t mbSize) {
       return;
 
   clusterCount = newClusterCount;
-
+  
+ mem = nullptr;
+ FREE_MEM(mem);
+ CREATE_MEM2(&mem, clusterCount * sizeof(Cluster));
+ large_use = true;
+  
+ if (!mem)
+  {
   free(mem);
   mem = calloc(clusterCount * sizeof(Cluster) + CacheLineSize - 1, 1);
-
+    large_use = false;
+ }
+   
   if (!mem)
   {
       std::cerr << "Failed to allocate " << mbSize
@@ -52,8 +63,29 @@ void TranspositionTable::resize(size_t mbSize) {
 
   table = (Cluster*)((uintptr_t(mem) + CacheLineSize - 1) & ~(CacheLineSize - 1));
 }
+#endif
+void TranspositionTable::resize(size_t mbSize) {
 
+	size_t newClusterCount = size_t(1) << msb((mbSize * 1024 * 1024) / sizeof(Cluster));
 
+	if (newClusterCount == clusterCount)
+		return;
+
+	clusterCount = newClusterCount;
+
+	free(mem);
+	mem = calloc(clusterCount * sizeof(Cluster) + CacheLineSize - 1, 1);
+
+	if (!mem)
+	{
+		std::cerr << "Failed to allocate " << mbSize
+			<< "MB for transposition table." << std::endl;
+		exit(EXIT_FAILURE);
+	}
+
+	table = (Cluster*)((uintptr_t(mem) + CacheLineSize - 1) & ~(CacheLineSize - 1));
+}
+  
 /// TranspositionTable::clear() overwrites the entire transposition table
 /// with zeros. It is called whenever the table is resized, or when the
 /// user asks the program to clear the table (from the UCI interface).
