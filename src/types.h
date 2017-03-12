@@ -38,11 +38,18 @@
 /// -DUSE_PEXT    | Add runtime support for use of pext asm-instruction. Works
 ///               | only in 64-bit mode and requires hardware with pext support.
 
+#define LOMONOSOV_TB
+//#define USE_POPCNT
+//#define USE_PEXT
+#define NO_PREFETCH
+
 #include <cassert>
 #include <cctype>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+
+
 
 #if defined(_MSC_VER)
 // Disable some silly and noisy warning from MSVC compiler
@@ -50,6 +57,15 @@
 #pragma warning(disable: 4146) // Unary minus operator applied to unsigned type
 #pragma warning(disable: 4800) // Forcing value to bool 'true' or 'false'
 #endif
+
+#ifndef NOMINMAX
+#  define NOMINMAX // Disable macros min() and max()
+#endif
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef WIN32_LEAN_AND_MEAN
+#undef NOMINMAX
 
 /// Predefined macros hell:
 ///
@@ -85,6 +101,12 @@ const bool HasPopCnt = true;
 const bool HasPopCnt = false;
 #endif
 
+#ifdef USE_AVX
+const bool HasAvx = true;
+#else
+const bool HasAvx = false;
+#endif
+
 #ifdef USE_PEXT
 const bool HasPext = true;
 #else
@@ -95,6 +117,11 @@ const bool HasPext = false;
 const bool Is64Bit = true;
 #else
 const bool Is64Bit = false;
+#endif
+
+#ifdef LOMONOSOV_TB
+#define KING_INDEX 30 // index of king place in piece array
+#define  C_PIECES  6    /* Maximum # of pieces of one color OTB */
 #endif
 
 typedef uint64_t Key;
