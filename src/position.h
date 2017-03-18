@@ -90,7 +90,6 @@ public:
   Square ep_square() const;
   bool empty(Square s) const;
   template<PieceType Pt> int count(Color c) const;
-  template<PieceType Pt> int count() const;
   template<PieceType Pt> const Square* squares(Color c) const;
   template<PieceType Pt> Square square(Color c) const;
 
@@ -155,7 +154,6 @@ public:
   int rule50_count() const;
   Score psq_score() const;
   Value non_pawn_material(Color c) const;
-  Value non_pawn_material() const;
 
   // Position consistency check, for debugging
   bool pos_is_ok(int* failedStep = nullptr) const;
@@ -236,10 +234,6 @@ inline Bitboard Position::pieces(Color c, PieceType pt1, PieceType pt2) const {
 
 template<PieceType Pt> inline int Position::count(Color c) const {
   return pieceCount[make_piece(c, Pt)];
-}
-
-template<PieceType Pt> inline int Position::count() const {
-  return pieceCount[make_piece(WHITE, Pt)] + pieceCount[make_piece(BLACK, Pt)];
 }
 
 template<PieceType Pt> inline const Square* Position::squares(Color c) const {
@@ -334,10 +328,6 @@ inline Score Position::psq_score() const {
 
 inline Value Position::non_pawn_material(Color c) const {
   return st->nonPawnMaterial[c];
-}
-
-inline Value Position::non_pawn_material() const {
-  return st->nonPawnMaterial[WHITE] + st->nonPawnMaterial[BLACK];
 }
 
 inline int Position::game_ply() const {
