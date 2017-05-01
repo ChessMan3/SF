@@ -135,7 +135,7 @@ enum CastlingSide {
   KING_SIDE, QUEEN_SIDE, CASTLING_SIDE_NB = 2
 };
 
-enum CastlingRight {
+enum CastlingRight {  // Defined as in PolyGlot book hash key
   NO_CASTLING,
   WHITE_OO,
   WHITE_OOO = WHITE_OO << 1,
@@ -184,10 +184,10 @@ enum Value : int {
   VALUE_MATED_IN_MAX_PLY = -VALUE_MATE + 2 * MAX_PLY,
 
   PawnValueMg   = 188,   PawnValueEg   = 248,
-  KnightValueMg = 753,   KnightValueEg = 832,
-  BishopValueMg = 814,   BishopValueEg = 890,
+  KnightValueMg = 748,   KnightValueEg = 825,
+  BishopValueMg = 814,   BishopValueEg = 885,
   RookValueMg   = 1285,  RookValueEg   = 1371,
-  QueenValueMg  = 2513,  QueenValueEg  = 2648,
+  QueenValueMg  = 2513,  QueenValueEg  = 2642,
 
   MidgameLimit  = 15258, EndgameLimit  = 3915
 };

@@ -198,6 +198,7 @@ namespace {
   const Score Hanging             = S( 48, 27);
   const Score ThreatByPawnPush    = S( 38, 22);
   const Score HinderPassedPawn    = S(  7,  0);
+  
 
   // Penalty for a bishop on a1/h1 (a8/h8 for black) which is trapped by
   // a friendly pawn on b2/g2 (b7/g7 for black). This can obviously only
@@ -618,7 +619,7 @@ namespace {
     {
         Square s = pop_lsb(&b);
 
-        assert(!(pos.pieces(PAWN) & forward_bb(Us, s)));
+        assert(!more_than_one(pos.pieces(PAWN) & forward_bb(Us, s)));
 
         bb = forward_bb(Us, s) & (ei.attackedBy[Them][ALL_PIECES] | pos.pieces(Them));
         score -= HinderPassedPawn * popcount(bb);
@@ -675,8 +676,8 @@ namespace {
         } // rr != 0
 
         // Scale down bonus for candidate passers which need more than one
-        // pawn push to become passed.
-        if (!pos.pawn_passed(Us, s + pawn_push(Us)))
+        // pawn push to become passed or have a pawn in front of them.
+        if (!pos.pawn_passed(Us, s + pawn_push(Us)) || (pos.pieces(PAWN) & forward_bb(Us, s)))
             mbonus /= 2, ebonus /= 2;
 
         score += make_score(mbonus, ebonus) + PassedFile[file_of(s)];
