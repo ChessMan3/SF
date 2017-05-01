@@ -18,31 +18,35 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TIMEMAN_H_INCLUDED
-#define TIMEMAN_H_INCLUDED
+/*
+  The code in this file is based on the opening book code in PolyGlot
+  by Fabien Letouzey. PolyGlot is available under the GNU General
+  Public License, and can be downloaded from http://wbec-ridderkerk.nl
+ */
+
+#ifndef BOOK_H_INCLUDED
+#define BOOK_H_INCLUDED
+
+#include <fstream>
+#include <string>
 
 #include "misc.h"
-#include "search.h"
-#include "thread.h"
+#include "position.h"
 
-/// The TimeManagement class computes the optimal time to think depending on
-/// the maximum available time, the game move number and other parameters.
-
-class TimeManagement {
+class PolyglotBook : private std::ifstream {
 public:
-  void init(Search::LimitsType& limits, Color us, int ply);
-  int optimum() const { return optimumTime; }
-  int maximum() const { return maximumTime; }
-  int elapsed() const { return int(Search::Limits.npmsec ? Threads.nodes_searched() : now() - startTime); }
-
-  int64_t availableNodes; // When in 'nodes as time' mode
+  PolyglotBook();
+ ~PolyglotBook();
+  Move probe(const Position& pos, const std::string& fName, bool pickBest);
 
 private:
-  TimePoint startTime;
-  int optimumTime;
-  int maximumTime;
+  template<typename T> PolyglotBook& operator>>(T& n);
+
+  bool open(const char* fName);
+  size_t find_first(Key key);
+
+  PRNG rng;
+  std::string fileName;
 };
 
-extern TimeManagement Time;
-
-#endif // #ifndef TIMEMAN_H_INCLUDED
+#endif // #ifndef BOOK_H_INCLUDED

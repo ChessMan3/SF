@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  SugaR, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  SugaR is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  SugaR is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -34,11 +34,11 @@ namespace {
     QSEARCH_RECAPTURES, QRECAPTURES
   };
 
-  // partial_insertion_sort() sorts moves in descending order up to and including
-  // a given limit. The order of moves smaller than the limit is left unspecified.
-  // To keep the implementation simple, *begin is always included in the sorted moves.
-  void partial_insertion_sort(ExtMove* begin, ExtMove* end, int limit) {
-
+  // An insertion sort, which sorts moves in descending order up to and including a given limit.
+  // The order of moves smaller than the limit is left unspecified.
+  // To keep the implementation simple, *begin is always included in the list of sorted moves.
+  void partial_insertion_sort(ExtMove* begin, ExtMove* end, int limit)
+  {
     for (ExtMove *sortedEnd = begin + 1, *p = begin + 1; p < end; ++p)
         if (p->value >= limit)
         {
@@ -54,10 +54,10 @@ namespace {
   // pick_best() finds the best move in the range (begin, end) and moves it to
   // the front. It's faster than sorting all the moves in advance when there
   // are few moves, e.g., the possible captures.
-  Move pick_best(ExtMove* begin, ExtMove* end) {
-
-    std::swap(*begin, *std::max_element(begin, end));
-    return *begin;
+  Move pick_best(ExtMove* begin, ExtMove* end)
+  {
+      std::swap(*begin, *std::max_element(begin, end));
+      return *begin;
   }
 
 } // namespace
@@ -120,7 +120,7 @@ MovePicker::MovePicker(const Position& p, Move ttm, Value th)
   ttMove =   ttm
           && pos.pseudo_legal(ttm)
           && pos.capture(ttm)
-          && pos.see_ge(ttm, threshold) ? ttm : MOVE_NONE;
+          && pos.see_ge(ttm, threshold)? ttm : MOVE_NONE;
 
   stage += (ttMove == MOVE_NONE);
 }
@@ -196,7 +196,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<CAPTURES>(pos, cur);
       score<CAPTURES>();
       ++stage;
-      /* fallthrough */
 
   case GOOD_CAPTURES:
       while (cur < endMoves)
@@ -219,7 +218,6 @@ Move MovePicker::next_move(bool skipQuiets) {
           &&  pos.pseudo_legal(move)
           && !pos.capture(move))
           return move;
-      /* fallthrough */
 
   case KILLERS:
       ++stage;
@@ -229,7 +227,6 @@ Move MovePicker::next_move(bool skipQuiets) {
           &&  pos.pseudo_legal(move)
           && !pos.capture(move))
           return move;
-      /* fallthrough */
 
   case COUNTERMOVE:
       ++stage;
@@ -241,15 +238,14 @@ Move MovePicker::next_move(bool skipQuiets) {
           &&  pos.pseudo_legal(move)
           && !pos.capture(move))
           return move;
-      /* fallthrough */
 
   case QUIET_INIT:
       cur = endBadCaptures;
       endMoves = generate<QUIETS>(pos, cur);
       score<QUIETS>();
-      partial_insertion_sort(cur, endMoves, -4000 * depth / ONE_PLY);
+
+       partial_insertion_sort(cur, endMoves, -4000 * depth / ONE_PLY);
       ++stage;
-      /* fallthrough */
 
   case QUIET:
       while (    cur < endMoves
@@ -265,7 +261,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       }
       ++stage;
       cur = moves; // Point to beginning of bad captures
-      /* fallthrough */
 
   case BAD_CAPTURES:
       if (cur < endBadCaptures)
@@ -277,7 +272,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<EVASIONS>(pos, cur);
       score<EVASIONS>();
       ++stage;
-      /* fallthrough */
 
   case ALL_EVASIONS:
       while (cur < endMoves)
@@ -293,7 +287,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<CAPTURES>(pos, cur);
       score<CAPTURES>();
       ++stage;
-      /* fallthrough */
 
   case PROBCUT_CAPTURES:
       while (cur < endMoves)
@@ -310,7 +303,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<CAPTURES>(pos, cur);
       score<CAPTURES>();
       ++stage;
-      /* fallthrough */
 
   case QCAPTURES_1: case QCAPTURES_2:
       while (cur < endMoves)
@@ -324,7 +316,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       cur = moves;
       endMoves = generate<QUIET_CHECKS>(pos, cur);
       ++stage;
-      /* fallthrough */
 
   case QCHECKS:
       while (cur < endMoves)
@@ -340,7 +331,6 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<CAPTURES>(pos, cur);
       score<CAPTURES>();
       ++stage;
-      /* fallthrough */
 
   case QRECAPTURES:
       while (cur < endMoves)
