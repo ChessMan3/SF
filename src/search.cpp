@@ -554,7 +554,7 @@ namespace {
     Depth extension, newDepth;
     Value bestValue, value, ttValue, eval;
     bool ttHit, inCheck, givesCheck, singularExtensionNode, improving;
-    bool captureOrPromotion, doFullDepthSearch, moveCountPruning, skipQuiets, ttCapture;
+    bool captureOrPromotion, doFullDepthSearch, moveCountPruning, skipQuiets;
     Piece moved_piece;
     int moveCount, quietCount;
 
@@ -565,6 +565,8 @@ namespace {
     ss->statScore = 0;
     bestValue = -VALUE_INFINITE;
     ss->ply = (ss-1)->ply + 1;
+	ss->ttCapture = false;
+	
 
     // Check for the available remaining time
     if (thisThread->resetCalls.load(std::memory_order_relaxed))
@@ -842,7 +844,7 @@ moves_loop: // When in check search starts from here
                            && (tte->bound() & BOUND_LOWER)
                            &&  tte->depth() >= depth - 3 * ONE_PLY;
     skipQuiets = false;
-    ttCapture = false;
+    ss->ttCapture=false;
 
     // Step 11. Loop through moves
     // Loop through all pseudo-legal moves until no moves remain or a beta cutoff occurs
@@ -962,7 +964,7 @@ moves_loop: // When in check search starts from here
       }
       
       if (move == ttMove && captureOrPromotion)
-          ttCapture = true;
+         ss->ttCapture = true;
 
       // Update the current move (this must be done after singular extension search)
       ss->currentMove = move;
@@ -985,7 +987,7 @@ moves_loop: // When in check search starts from here
           {
           
               // Increase reduction if ttMove is a capture
-              if (ttCapture)
+              if (ss->ttCapture)
                   r += ONE_PLY;
           
               // Increase reduction for cut nodes
@@ -1005,8 +1007,11 @@ moves_loop: // When in check search starts from here
                              + thisThread->history[~pos.side_to_move()][from_to(move)]
                              - 4000; // Correction factor
 
+			  if((ss-1)->ttCapture && (ss-1)->moveCount==1)
+				  r += ONE_PLY;
+
               // Decrease/increase reduction by comparing opponent's stat score
-              if (ss->statScore > 0 && (ss-1)->statScore < 0)
+              else if (ss->statScore > 0 && (ss-1)->statScore < 0)
                   r -= ONE_PLY;
 
               else if (ss->statScore < 0 && (ss-1)->statScore > 0)
