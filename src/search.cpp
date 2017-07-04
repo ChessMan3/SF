@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  SugaR, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  SugaR is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  SugaR is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -25,6 +25,8 @@
 #include <iostream>
 #include <sstream>
 
+#include "book.h"
+#include "tzbook.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -143,6 +145,9 @@ namespace {
   EasyMoveManager EasyMove;
   Value DrawValue[COLOR_NB];
 
+  bool doRazor, doFutility, doNull, doProbcut, doPruning, doLMR;
+  Depth maxLMR;
+  
   template <NodeType NT>
   Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, bool cutNode, bool skipEarlyPruning);
 
@@ -241,13 +246,20 @@ template uint64_t Search::perft<true>(Position&, Depth);
 
 void MainThread::search() {
 
+  static PolyglotBook book; // Defined static to initialize the PRNG only once
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
   TT.new_search();
 
-  int contempt = Options["Contempt"] * PawnValueEg / 100; // From centipawns
-  DrawValue[ us] = VALUE_DRAW - Value(contempt);
-  DrawValue[~us] = VALUE_DRAW + Value(contempt);
+
+  // Read search options
+  doRazor = Options["Razoring"];
+  doFutility = Options["Futility"];
+  doNull = Options["NullMove"];
+  doProbcut = Options["ProbCut"];
+  doPruning = Options["Pruning"];
+  doLMR = Options["LMR"];
+  maxLMR = Options["MaxLMR"] * ONE_PLY;
 
   if (rootMoves.empty())
   {
@@ -258,11 +270,36 @@ void MainThread::search() {
   }
   else
   {
+      if (Options["OwnBook"] && !Limits.infinite && !Limits.mate)
+      {
+          Move bookMove = book.probe(rootPos, Options["Book File"], Options["Best Book Line"]);
+
+          if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+          {
+              std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+              goto finalize;
+          }
+      }
+      Move bookMove = MOVE_NONE;
+
+      if (!Limits.infinite && !Limits.mate)
+          bookMove = tzbook.probe2(rootPos);
+
+      if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+      {
+          std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
       for (Thread* th : Threads)
+              if (th != this)
+                 std::swap(th->rootMoves[0], *std::find(th->rootMoves.begin(), th->rootMoves.end(), bookMove));
+      }
+      else
+      {
+          for (Thread* th : Threads)
           if (th != this)
               th->start_searching();
 
       Thread::search(); // Let's start searching!
+      }
   }
 
   // When playing in 'nodes as time' mode, subtract the searched nodes from
@@ -270,6 +307,7 @@ void MainThread::search() {
   if (Limits.npmsec)
       Time.availableNodes += Limits.inc[us] - Threads.nodes_searched();
 
+finalize:
   // When we reach the maximum depth, we can arrive here without a raise of
   // Signals.stop. However, if we are pondering or in an infinite search,
   // the UCI protocol states that we shouldn't print the best move before the
@@ -340,6 +378,8 @@ void Thread::search() {
   bestValue = delta = alpha = -VALUE_INFINITE;
   beta = VALUE_INFINITE;
   completedDepth = DEPTH_ZERO;
+  Color us = rootPos.side_to_move();
+  int contempt = Options["Contempt"] * PawnValueEg / 100; // From centipawns
 
   if (mainThread)
   {
@@ -352,6 +392,7 @@ void Thread::search() {
   size_t multiPV = Options["MultiPV"];
   Skill skill(Options["Skill Level"]);
 
+  if (Options["Tactical Mode"]) multiPV=256;
   // When playing with strength handicap enable MultiPV search that we will
   // use behind the scenes to retrieve a set of possible moves.
   if (skill.enabled())
@@ -364,6 +405,9 @@ void Thread::search() {
          && !Signals.stop
          && !(Limits.depth && mainThread && rootDepth / ONE_PLY > Limits.depth))
   {
+      DrawValue[ us] = VALUE_DRAW - Value(contempt + std::round(Threads.main()->dynamicContempt));
+      DrawValue[~us] = VALUE_DRAW + Value(contempt + std::round(Threads.main()->dynamicContempt));
+
       // Distribute search depths across the threads
       if (idx)
       {
@@ -701,7 +745,8 @@ namespace {
         goto moves_loop;
 
     // Step 6. Razoring (skipped when in check)
-    if (   !PvNode
+    if (    doRazor
+        && !PvNode
         &&  depth < 4 * ONE_PLY
         &&  eval + razor_margin[depth / ONE_PLY] <= alpha)
     {
@@ -715,7 +760,9 @@ namespace {
     }
 
     // Step 7. Futility pruning: child node (skipped when in check)
-    if (   !rootNode
+    
+    if (    doFutility
+        && !rootNode
         &&  depth < 7 * ONE_PLY
         &&  eval - futility_margin(depth) >= beta
         &&  eval < VALUE_KNOWN_WIN  // Do not return unproven wins
@@ -723,7 +770,8 @@ namespace {
         return eval;
 
     // Step 8. Null move search with verification search (is omitted in PV nodes)
-    if (   !PvNode
+    if (    doNull
+        && !PvNode
         &&  eval >= beta
         && (ss->staticEval >= beta - 35 * (depth / ONE_PLY - 6) || depth >= 13 * ONE_PLY)
         &&  pos.non_pawn_material(pos.side_to_move()))
@@ -763,7 +811,8 @@ namespace {
     // Step 9. ProbCut (skipped when in check)
     // If we have a good enough capture and a reduced search returns a value
     // much above beta, we can (almost) safely prune the previous move.
-    if (   !PvNode
+    if (    doProbcut
+        && !PvNode
         &&  depth >= 5 * ONE_PLY
         &&  abs(beta) < VALUE_MATE_IN_MAX_PLY)
     {
@@ -951,7 +1000,8 @@ moves_loop: // When in check search starts from here
 
       // Step 15. Reduced depth search (LMR). If the move fails high it will be
       // re-searched at full depth.
-      if (    depth >= 3 * ONE_PLY
+      if (    doLMR
+	      &&  depth >= 3 * ONE_PLY
           &&  moveCount > 1
           && (!captureOrPromotion || moveCountPruning))
       {
@@ -993,6 +1043,16 @@ moves_loop: // When in check search starts from here
               r = std::max(DEPTH_ZERO, (r / ONE_PLY - ss->statScore / 20000) * ONE_PLY);
           }
 
+		  
+          // Set maximum reduction
+          r = std::min(r, maxLMR);
+		  
+          // The "Tactical Mode" option looks SugaR to look at more positions per search depth, but SugaR will play
+          // weaker overall.  It also sets the "MultiPV" option to 256 to allow SugaR to look at more nodes per
+          // depth and may help in analysis.
+		  if ( ( ss->ply < depth / 2 - ONE_PLY) && Options["Tactical Mode"] )
+		    r = DEPTH_ZERO;
+		
           Depth d = std::max(newDepth - r, ONE_PLY);
 
           value = -search<NonPV>(pos, ss+1, -(alpha+1), -alpha, d, true, false);
