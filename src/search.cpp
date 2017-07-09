@@ -142,6 +142,7 @@ namespace {
 
   EasyMoveManager EasyMove;
   Value DrawValue[COLOR_NB];
+  int variety;
 
   template <NodeType NT>
   Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, bool cutNode, bool skipEarlyPruning);
@@ -243,6 +244,7 @@ void MainThread::search() {
 
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
+  variety = Options["Variety"];
   TT.new_search();
 
   int contempt = Options["Contempt"] * PawnValueEg / 100; // From centipawns
@@ -1334,6 +1336,9 @@ moves_loop: // When in check search starts from here
           }
        }
     }
+	
+	if (bestValue + (variety * PawnValueEg / 100) >= 0 )
+    bestValue += rand() % (variety + 1); 
 
     // All legal moves have been searched. A special case: If we're in check
     // and no legal moves were found, it is checkmate.
