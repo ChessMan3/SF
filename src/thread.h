@@ -60,13 +60,15 @@ public:
   Material::Table materialTable;
   Endgames endgames;
   size_t idx, PVIdx;
-  int maxPly;
-  std::atomic<uint64_t> nodes, tbHits;
+  int maxPly, callsCnt;
+  std::atomic<uint64_t> tbHits;
+  std::atomic<uint64_t> nodes;
 
   Position rootPos;
   Search::RootMoves rootMoves;
-  Depth rootDepth;
+  std::atomic<Depth> rootDepth;
   Depth completedDepth;
+  std::atomic_bool resetCalls;
   CounterMoveStat counterMoves;
   ButterflyHistory history;
   CounterMoveHistoryStat counterMoveHistory;
@@ -77,12 +79,10 @@ public:
 
 struct MainThread : public Thread {
   virtual void search();
-  void check_time();
 
   bool easyMovePlayed, failedLow;
   double bestMoveChanges;
   Value previousScore;
-  int callsCnt = 0;
 };
 
 
