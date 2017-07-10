@@ -22,13 +22,14 @@
 #include <cassert>
 #include <ostream>
 
+#include <thread>
 #include "misc.h"
 #include "search.h"
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
-
+#include "tzbook.h"
 using std::string;
 
 UCI::OptionsMap Options; // Global object
@@ -38,11 +39,12 @@ namespace UCI {
 /// 'On change' actions, triggered by an option's value change
 void on_clear_hash(const Option&) { Search::clear(); }
 void on_hash_size(const Option& o) { TT.resize(o); }
+void on_large_pages(const Option& o) { TT.resize(o); }  // warning is ok, will be removed
 void on_logger(const Option& o) { start_logger(o); }
 void on_threads(const Option&) { Threads.read_uci_options(); }
 void on_tb_path(const Option& o) { Tablebases::init(o); }
-
-
+void on_brainbook_path(const Option& o) { tzbook.init(o); }
+void on_book_move2_prob(const Option& o) { tzbook.set_book_move2_probability(o); }
 /// Our case insensitive less() function as required by UCI protocol
 bool CaseInsensitiveLess::operator() (const string& s1, const string& s2) const {
 
@@ -57,23 +59,34 @@ void init(OptionsMap& o) {
 
   const int MaxHashMB = Is64Bit ? 1024 * 1024 : 2048;
 
-  o["Debug Log File"]        << Option("", on_logger);
-  o["Contempt"]              << Option(0, -100, 100);
-  o["Threads"]               << Option(1, 1, 512, on_threads);
-  o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
-  o["Clear Hash"]            << Option(on_clear_hash);
-  o["Ponder"]                << Option(false);
-  o["MultiPV"]               << Option(1, 1, 500);
-  o["Skill Level"]           << Option(20, 0, 20);
-  o["Move Overhead"]         << Option(30, 0, 5000);
-  o["Minimum Thinking Time"] << Option(20, 0, 5000);
-  o["Slow Mover"]            << Option(89, 10, 1000);
-  o["nodestime"]             << Option(0, 0, 10000);
-  o["UCI_Chess960"]          << Option(false);
-  o["SyzygyPath"]            << Option("<empty>", on_tb_path);
-  o["SyzygyProbeDepth"]      << Option(1, 1, 100);
-  o["Syzygy50MoveRule"]      << Option(true);
-  o["SyzygyProbeLimit"]      << Option(6, 0, 6);
+  
+  unsigned int n = std::thread::hardware_concurrency();
+  if (!n) n = 1;
+  o["Debug Log File"]         << Option("", on_logger);
+  o["Contempt"]               << Option(0, -100, 100);
+  o["OwnBook"]                << Option(false);
+  o["Threads"]                << Option(n, 1, 512, on_threads);
+  o["Hash"]                   << Option(16, 1, MaxHashMB, on_hash_size);
+  o["Clear Hash"]             << Option(on_clear_hash);
+  o["Clean Search"]           << Option(false);
+  o["Large Pages"]            << Option(false, on_large_pages);
+  o["Ponder"]                 << Option(false);
+  o["MultiPV"]                << Option(1, 1, 500);
+  o["Skill Level"]            << Option(20, 0, 20);
+  o["Best Book Move"]         << Option(false);
+  o["Book File"]              << Option("book.bin");
+  o["Move Overhead"]          << Option(30, 0, 5000);
+  o["Minimum Thinking Time"]  << Option(20, 0, 5000);
+  o["Slow Mover"]             << Option(89, 10, 1000);
+  o["nodestime"]              << Option(0, 0, 10000);
+  o["UCI_Chess960"]           << Option(false);
+  o["SyzygyPath"]             << Option("<empty>", on_tb_path);
+  o["UseSyzygy"]              << Option(false);
+  o["SyzygyProbeDepth"]       << Option(1, 0, 100);
+  o["Syzygy50MoveRule"]       << Option(true);
+  o["Cerebellum Library"]     << Option();
+  o["Book Move2 Probability"] << Option(0, 0, 100, on_book_move2_prob);
+  o["BookPath"]               << Option("<empty>", on_brainbook_path);
 }
 
 

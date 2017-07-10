@@ -135,7 +135,7 @@ enum CastlingSide {
   KING_SIDE, QUEEN_SIDE, CASTLING_SIDE_NB = 2
 };
 
-enum CastlingRight {
+enum CastlingRight {  // Defined as in PolyGlot book hash key
   NO_CASTLING,
   WHITE_OO,
   WHITE_OOO = WHITE_OO << 1,
@@ -153,7 +153,7 @@ template<Color C, CastlingSide S> struct MakeCastling {
 
 enum Phase {
   PHASE_ENDGAME,
-  PHASE_MIDGAME = 128,
+  PHASE_MIDGAME = 256,
   MG = 0, EG = 1, PHASE_NB = 2
 };
 

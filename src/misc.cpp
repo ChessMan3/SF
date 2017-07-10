@@ -41,7 +41,7 @@ typedef bool(*fun3_t)(HANDLE, CONST GROUP_AFFINITY*, PGROUP_AFFINITY);
 #include <iostream>
 #include <sstream>
 #include <vector>
-
+#include <thread>
 #include "misc.h"
 #include "thread.h"
 
@@ -51,7 +51,7 @@ namespace {
 
 /// Version number. If Version is left empty, then compile date in the format
 /// DD-MM-YY and show in engine_info.
-const string Version = "";
+static const string Version = " ";
 
 /// Our fancy logging facility. The trick here is to replace cin.rdbuf() and
 /// cout.rdbuf() with two Tie objects that tie cin and cout to a file stream. We
@@ -121,8 +121,10 @@ const string engine_info(bool to_uci) {
   const string months("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec");
   string month, day, year;
   stringstream ss, date(__DATE__); // From compiler, format is "Sep 21 2008"
-
-  ss << "Stockfish " << Version << setfill('0');
+  
+  unsigned int n = std::thread::hardware_concurrency();
+  
+  ss << "Sf_TvV100717MZ" << Version << setfill('0');
 
   if (Version.empty())
   {
@@ -133,9 +135,17 @@ const string engine_info(bool to_uci) {
   ss << (Is64Bit ? " 64" : "")
      << (HasPext ? " BMI2" : (HasPopCnt ? " POPCNT" : ""))
      << (to_uci  ? "\nid author ": " by ")
-     << "T. Romstad, M. Costalba, J. Kiiski, G. Linscott";
+     << "T. Romstad, M. Costalba, J. Kiiski, G. Linscott\n"
+     << "compiled by MZ";
+  ss << (to_uci ? "" : "\nDetected: ")
+     << (to_uci ? "" : std::to_string(n))
+     << (to_uci ? "" : " CPU(s)")
+     << (to_uci ? "" : "\n")
+	 << (to_uci ? "" : "Functional Change : Tuning Valuation Values.\n");
+  ss << (to_uci ? "" : "\n");
+	 
 
-  return ss.str();
+	 return ss.str();
 }
 
 
@@ -146,6 +156,35 @@ void dbg_hit_on(bool b) { ++hits[0]; if (b) ++hits[1]; }
 void dbg_hit_on(bool c, bool b) { if (c) dbg_hit_on(b); }
 void dbg_mean_of(int v) { ++means[0]; means[1] += v; }
 
+static std::vector<double> Samples, Sums, Covariances;
+static size_t samplesCnt;
+
+void dbg_stats_add_sample(double p) { Samples.push_back(p); }
+
+void dbg_stats_of() {
+
+  const size_t N = Samples.size();
+
+  if (Sums.size() != N)
+  {
+      samplesCnt = 0;
+      Sums.clear();
+      Sums.resize(N);
+      Covariances.clear();
+      Covariances.resize(N * N);
+  }
+
+  for (size_t i = 0; i < N; ++i)
+  {
+      Sums[i] += Samples[i];
+      for (size_t j = 0; j < N; ++j)
+          Covariances[i * N + j] += Samples[i] * Samples[j];
+  }
+
+  samplesCnt++;
+  Samples.clear();
+}
+
 void dbg_print() {
 
   if (hits[0])
@@ -155,6 +194,28 @@ void dbg_print() {
   if (means[0])
       cerr << "Total " << means[0] << " Mean "
            << (double)means[1] / means[0] << endl;
+
+  if (samplesCnt)
+  {
+      const size_t N = Sums.size();
+
+      std::cerr << "\nMeans:\n";
+
+      for (size_t i = 0; i < Sums.size(); ++i)
+          std::cerr << showpoint << noshowpos << fixed << setprecision(2)
+                    << std::setw(15) << Sums[i] / samplesCnt << " ";
+
+      std::cerr << "\n\nCovariances:\n";
+
+      for (size_t i = 0; i < Covariances.size(); ++i)
+      {
+          if (i % N == 0)
+              std::cerr << "\n";
+
+          std::cerr << showpoint << noshowpos << fixed << setprecision(2)
+                    << std::setw(15) << Covariances[i] << " ";
+      }
+  }
 }
 
 
@@ -221,7 +282,7 @@ void bindThisThread(size_t) {}
 
 /// get_group() retrieves logical processor information using Windows specific
 /// API and returns the best group id for the thread with index idx. Original
-/// code from Texel by Peter Österlund.
+/// code from Texel by Peter Ãsterlund.
 
 int get_group(size_t idx) {
 
