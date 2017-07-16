@@ -141,6 +141,7 @@ namespace {
 
   EasyMoveManager EasyMove;
   Value DrawValue[COLOR_NB];
+  int variety;
 
   template <NodeType NT>
   Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, bool cutNode, bool skipEarlyPruning);
@@ -242,6 +243,7 @@ void MainThread::search() {
 
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
+  variety = Options["Variety"];
   TT.new_search();
 
   int contempt = Options["Contempt"] * PawnValueEg / 100; // From centipawns
@@ -1311,6 +1313,10 @@ moves_loop: // When in check search starts from here
       pos.undo_move(move);
 
       assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
+
+	  //Add a little variety to play
+      if (variety && value + (variety * 1 * PawnValueEg / 100) >= 0 )
+           value += rand() % (variety * 1);
 
       // Check for a new best move
       if (value > bestValue)
