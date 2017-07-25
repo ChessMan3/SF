@@ -21,6 +21,9 @@
 #include <algorithm>
 #include <cassert>
 #include <ostream>
+//dani170724
+#include <iostream>
+//enddani170724
 
 #include "misc.h"
 #include "search.h"
@@ -29,7 +32,9 @@
 #include "uci.h"
 #include "syzygy/tbprobe.h"
 
+
 using std::string;
+using namespace std;
 
 UCI::OptionsMap Options; // Global object
 
@@ -41,6 +46,11 @@ void on_hash_size(const Option& o) { TT.resize(o); }
 void on_logger(const Option& o) { start_logger(o); }
 void on_threads(const Option&) { Threads.read_uci_options(); }
 void on_tb_path(const Option& o) { Tablebases::init(o); }
+//dani170724
+void on_HashFile(const Option& o) { TT.set_hash_file_name(o); }
+void SaveHashtoFile(const Option&) { TT.save(); }
+void LoadHashfromFile(const Option&) { TT.load(); }
+//enddani170724
 
 
 /// Our case insensitive less() function as required by UCI protocol
@@ -74,6 +84,12 @@ void init(OptionsMap& o) {
   o["SyzygyProbeDepth"]      << Option(1, 1, 100);
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(6, 0, 6);
+  //dani170724
+  o["NeverClearHash"]		 << Option(false);
+  o["HashFile"]				 << Option("hash.hsh", on_HashFile);
+  o["SaveHashtoFile"]		 << Option(SaveHashtoFile);
+  o["LoadHashfromFile"]		 << Option(LoadHashfromFile);
+  //enddani170724
 }
 
 

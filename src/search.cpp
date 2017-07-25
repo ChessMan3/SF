@@ -186,7 +186,10 @@ void Search::init() {
 /// Search::clear() resets search state to its initial value, to obtain reproducible results
 
 void Search::clear() {
-
+  //dani170724
+  if (Options["NeverClearHash"])
+	return;
+  //enddani170724
   TT.clear();
 
   for (Thread* th : Threads)
@@ -242,7 +245,12 @@ void MainThread::search() {
 
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
-  TT.new_search();
+  //dani170724
+  if (!Limits.infinite)
+	TT.new_search();
+  else
+	TT.infinite_search();
+  //enddani170724
 
   int contempt = Options["Contempt"] * PawnValueEg / 100; // From centipawns
   DrawValue[ us] = VALUE_DRAW - Value(contempt);
