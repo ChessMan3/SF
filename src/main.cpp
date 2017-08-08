@@ -21,11 +21,13 @@
 #include <iostream>
 
 #include "bitboard.h"
+#include "evaluate.h"
 #include "position.h"
 #include "search.h"
 #include "thread.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
+#include "tzbook.h"
 
 namespace PSQT {
   void init();
@@ -40,9 +42,11 @@ int main(int argc, char* argv[]) {
   Bitboards::init();
   Position::init();
   Bitbases::init();
+  Eval::init();
   Search::init();
   Pawns::init();
   Threads.init();
+  tzbook.init(Options["BookPath"]);
 
   UCI::loop(argc, argv);
 

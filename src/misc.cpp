@@ -122,7 +122,7 @@ const string engine_info(bool to_uci) {
   string month, day, year;
   stringstream ss, date(__DATE__); // From compiler, format is "Sep 21 2008"
 
-  ss << "Stockfish " << Version << setfill('0');
+  ss << "Sf-Zander " << Version << setfill('0');
 
   if (Version.empty())
   {
@@ -133,12 +133,12 @@ const string engine_info(bool to_uci) {
   ss << (Is64Bit ? " 64" : "")
      << (HasPext ? " BMI2" : (HasPopCnt ? " POPCNT" : ""))
      << (to_uci  ? "\nid author ": " by ")
-     << "T. Romstad, M. Costalba, J. Kiiski, G. Linscott";
+     << "T. Romstad, M. Costalba, J. Kiiski, G. Linscott\n"
+     << "compiled by MZ";
+  ss << (to_uci ? "" : "\n080817 Release");
 
   return ss.str();
 }
-
-
 /// Debug functions used mainly to collect run-time statistics
 static int64_t hits[2], means[2];
 

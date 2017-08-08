@@ -28,6 +28,7 @@
 #include "evaluate.h"
 #include "material.h"
 #include "pawns.h"
+#include "uci.h"
 
 namespace {
 
@@ -136,6 +137,10 @@ namespace {
     int kingAdjacentZoneAttacksCount[COLOR_NB];
   };
 
+  // Evaluation weights, initialized from UCI options
+  enum { MaterialT, Imbalance, PawnStructure, Mobility, PassedPawns, KingSafety, Threats, Space };
+  struct Weight { int mg, eg; } Weights[8];
+
   #define V(v) Value(v)
   #define S(mg, eg) make_score(mg, eg)
 
@@ -164,6 +169,13 @@ namespace {
   const Score Outpost[][2] = {
     { S(22, 6), S(33, 9) }, // Knight
     { S( 9, 2), S(14, 4) }  // Bishop
+  };
+
+  // BadBishop[] contains a penalty according to the number
+  // of our pawns on the same square color as the bishop.
+  const Score BadBishop[] = {
+   S( 0,  0), S( 9,  8), S(12, 22), S(28, 34), S(30, 45),
+   S(40, 56), S(47, 76), S(59, 79), S(61, 99)
   };
 
   // RookOnFile[semiopen/open] contains bonuses for each rook when there is no
@@ -203,7 +215,6 @@ namespace {
 
   // Assorted bonuses and penalties used by evaluation
   const Score MinorBehindPawn     = S( 16,  0);
-  const Score BishopPawns         = S(  8, 12);
   const Score RookOnPawn          = S(  8, 24);
   const Score TrappedRook         = S( 92,  0);
   const Score WeakQueen           = S( 50, 10);
@@ -237,6 +248,11 @@ namespace {
   // Threshold for lazy and space evaluation
   const Value LazyThreshold  = Value(1500);
   const Value SpaceThreshold = Value(12222);
+
+  // apply_weight() scales score 'v' by weight 'w'
+  Score apply_weight(Score v, const Weight& w) {
+    return make_score(mg_value(v) * w.mg / 100, eg_value(v) * w.eg / 100);
+  }
 
 
   // initialize() computes king and pawn attacks, and the king ring bitboard
@@ -343,7 +359,7 @@ namespace {
 
             // Penalty for pawns on the same color square as the bishop
             if (Pt == BISHOP)
-                score -= BishopPawns * pe->pawns_on_same_color_squares(Us, s);
+                score -= BadBishop[pe->pawns_on_same_color_squares(Us, s)];
 
             // An important Chess960 pattern: A cornered bishop blocked by a friendly
             // pawn diagonally in front of it is a very serious problem, especially
@@ -377,7 +393,9 @@ namespace {
 
                 if (   ((file_of(ksq) < FILE_E) == (file_of(s) < file_of(ksq)))
                     && !pe->semiopen_side(Us, file_of(ksq), file_of(s) < file_of(ksq)))
-                    score -= (TrappedRook - make_score(mob * 22, 0)) * (1 + !pos.can_castle(Us));
+                    score -= (TrappedRook - make_score(mob * 22, 0)) * (1 + (  !pos.can_castle(Us)
+                                                                             && rank_of(ksq) == rank_of(s)
+                                                                             && relative_rank(Us, ksq) == RANK_1));
             }
         }
 
@@ -516,9 +534,9 @@ namespace {
         score -= PawnlessFlank;
 
     if (T)
-        Trace::add(KING, Us, score);
+        Trace::add(KING, Us, apply_weight(score, Weights[KingSafety]));
 
-    return score;
+    return apply_weight(score, Weights[KingSafety]);
   }
 
 
@@ -611,9 +629,9 @@ namespace {
     score += ThreatByPawnPush * popcount(b);
 
     if (T)
-        Trace::add(THREAT, Us, score);
+        Trace::add(THREAT, Us, apply_weight(score, Weights[Threats]));
 
-    return score;
+    return apply_weight(score, Weights[Threats]);
   }
 
 
@@ -700,9 +718,9 @@ namespace {
     }
 
     if (T)
-        Trace::add(PASSED, Us, score);
+        Trace::add(PASSED, Us, apply_weight(score, Weights[PassedPawns]));
 
-    return score;
+    return apply_weight(score, Weights[PassedPawns]);
   }
 
 
@@ -824,15 +842,16 @@ namespace {
     // Initialize score by reading the incrementally updated scores included in
     // the position object (material + piece square tables) and the material
     // imbalance. Score is computed internally from the white point of view.
-    Score score = pos.psq_score() + me->imbalance();
+    Score score =  apply_weight(pos.psq_score(), Weights[MaterialT])
+                 + apply_weight(me->imbalance(), Weights[Imbalance]);
 
     // Probe the pawn hash table
     pe = Pawns::probe(pos);
-    score += pe->pawns_score();
+    score += apply_weight(pe->pawns_score(), Weights[PawnStructure]);
 
     // Early exit if score is high
     Value v = (mg_value(score) + eg_value(score)) / 2;
-    if (abs(v) > LazyThreshold)
+    if (!T && abs(v) > LazyThreshold)
        return pos.side_to_move() == WHITE ? v : -v;
 
     // Main evaluation begins here
@@ -845,7 +864,7 @@ namespace {
     score += evaluate_pieces<WHITE, ROOK  >() - evaluate_pieces<BLACK, ROOK  >();
     score += evaluate_pieces<WHITE, QUEEN >() - evaluate_pieces<BLACK, QUEEN >();
 
-    score += mobility[WHITE] - mobility[BLACK];
+    score += apply_weight(mobility[WHITE] - mobility[BLACK], Weights[Mobility]);
 
     score +=  evaluate_king<WHITE>()
             - evaluate_king<BLACK>();
@@ -857,8 +876,8 @@ namespace {
             - evaluate_passed_pawns<BLACK>();
 
     if (pos.non_pawn_material() >= SpaceThreshold)
-        score +=  evaluate_space<WHITE>()
-                - evaluate_space<BLACK>();
+        score += apply_weight(  evaluate_space<WHITE>()
+                              - evaluate_space<BLACK>(), Weights[Space]);
 
     score += evaluate_initiative(eg_value(score));
 
@@ -872,13 +891,14 @@ namespace {
     // In case of tracing add all remaining individual evaluation terms
     if (T)
     {
-        Trace::add(MATERIAL, pos.psq_score());
-        Trace::add(IMBALANCE, me->imbalance());
-        Trace::add(PAWN, pe->pawns_score());
-        Trace::add(MOBILITY, mobility[WHITE], mobility[BLACK]);
+        Trace::add(MATERIAL, apply_weight(pos.psq_score(), Weights[MaterialT]));
+        Trace::add(IMBALANCE, apply_weight(me->imbalance(), Weights[Imbalance]));
+        Trace::add(PAWN, apply_weight(pe->pawns_score(), Weights[PawnStructure]));
+        Trace::add(MOBILITY, apply_weight(mobility[WHITE], Weights[Mobility]),
+                             apply_weight(mobility[BLACK], Weights[Mobility]));
         if (pos.non_pawn_material() >= SpaceThreshold)
-            Trace::add(SPACE, evaluate_space<WHITE>()
-                            , evaluate_space<BLACK>());
+            Trace::add(SPACE, apply_weight(evaluate_space<WHITE>(), Weights[Space]),
+                              apply_weight(evaluate_space<BLACK>(), Weights[Space]));
         Trace::add(TOTAL, score);
     }
 
@@ -930,4 +950,21 @@ std::string Eval::trace(const Position& pos) {
   ss << "\nTotal Evaluation: " << to_cp(v) << " (white side)\n";
 
   return ss.str();
+}
+
+
+namespace Eval {
+
+  // init() reads evaluation weights from the corresponding UCI parameters
+  void init() {
+
+      Weights[MaterialT]     = { Options["Material(MG)"], Options["Material(EG)"] };
+      Weights[Imbalance]     = { Options["Imbalance(MG)"], Options["Imbalance(EG)"] };
+      Weights[PawnStructure] = { Options["PawnStructure(MG)"], Options["PawnStructure(EG)"] };
+      Weights[Mobility]      = { Options["Mobility(MG)"], Options["Mobility(EG)"] };
+      Weights[PassedPawns]   = { Options["PassedPawns(MG)"], Options["PassedPawns(EG)"] };
+      Weights[KingSafety]    = { Options["KingSafety(MG)"], Options["KingSafety(EG)"] };
+      Weights[Threats]       = { Options["Threats(MG)"], Options["Threats(EG)"] };
+      Weights[Space]         = { Options["Space"], 0 };
+  }
 }

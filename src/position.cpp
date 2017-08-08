@@ -755,7 +755,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       st->psq -= PSQT::psq[captured][capsq];
 
       // Reset rule 50 counter
-      st->rule50 = 0;
+      if (st->rule50 < 101) st->rule50 = 0;
   }
 
   // Update hash key
@@ -819,7 +819,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       prefetch2(thisThread->pawnsTable[st->pawnKey]);
 
       // Reset rule 50 draw counter
-      st->rule50 = 0;
+      if (st->rule50 < 101) st->rule50 = 0;
   }
 
   // Update incremental scores
@@ -1075,7 +1075,7 @@ bool Position::is_draw(int ply) const {
 
   int end = std::min(st->rule50, st->pliesFromNull);
 
-  if (end < 4)
+  if (end < 4) // Return immediately
     return false;
 
   StateInfo* stp = st->previous->previous;
@@ -1089,7 +1089,7 @@ bool Position::is_draw(int ply) const {
       // repeats once earlier but strictly after the root, or repeats twice
       // before or at the root.
       if (   stp->key == st->key
-          && ++cnt + (ply - 1 > i) == 2)
+          && ++cnt + (ply - i > 1) == 2)
           return true;
   }
 

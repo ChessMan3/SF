@@ -67,9 +67,9 @@ public:
   Search::RootMoves rootMoves;
   Depth rootDepth;
   Depth completedDepth;
-  CounterMoveHistory counterMoves;
-  ButterflyHistory mainHistory;
-  ContinuationHistory contHistory;
+  CounterMoveStat counterMoves;
+  ButterflyHistory history;
+  CounterMoveHistoryStat counterMoveHistory;
 };
 
 
@@ -79,7 +79,7 @@ struct MainThread : public Thread {
   virtual void search();
   void check_time();
 
-  bool easyMovePlayed, failedLow;
+  bool easyMovePlayed, failedLow, newPVIdx;
   double bestMoveChanges;
   Value previousScore;
   int callsCnt = 0;
