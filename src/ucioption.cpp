@@ -22,6 +22,7 @@
 #include <cassert>
 #include <ostream>
 
+#include "evaluate.h"
 #include "misc.h"
 #include "search.h"
 #include "thread.h"
@@ -37,6 +38,7 @@ namespace UCI {
 
 /// 'On change' actions, triggered by an option's value change
 void on_clear_hash(const Option&) { Search::clear(); }
+void on_eval(const Option&) { Eval::init(); }
 void on_hash_size(const Option& o) { TT.resize(o); }
 void on_logger(const Option& o) { start_logger(o); }
 void on_threads(const Option&) { Threads.read_uci_options(); }
@@ -58,11 +60,34 @@ void init(OptionsMap& o) {
   const int MaxHashMB = Is64Bit ? 1024 * 1024 : 2048;
 
   o["Debug Log File"]        << Option("", on_logger);
-  o["Contempt"]              << Option(0, -100, 100);
+  o["Contempt"]              << Option(0, -800, 800);
   o["Threads"]               << Option(1, 1, 512, on_threads);
   o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
   o["Clear Hash"]            << Option(on_clear_hash);
   o["Ponder"]                << Option(false);
+  o["Material(MG)"]          << Option(100, 0, 300, on_eval);
+  o["Material(EG)"]          << Option(100, 0, 300, on_eval);
+  o["Imbalance(MG)"]         << Option(100, 0, 300, on_eval);
+  o["Imbalance(EG)"]         << Option(100, 0, 300, on_eval);
+  o["PawnStructure(MG)"]     << Option(100, 0, 300, on_eval);
+  o["PawnStructure(EG)"]     << Option(100, 0, 300, on_eval);
+  o["Mobility(MG)"]          << Option(100, 0, 300, on_eval);
+  o["Mobility(EG)"]          << Option(100, 0, 300, on_eval);
+  o["PassedPawns(MG)"]       << Option(100, 0, 300, on_eval);
+  o["PassedPawns(EG)"]       << Option(100, 0, 300, on_eval);
+  o["KingSafety(MG)"]        << Option(100, 0, 300, on_eval);
+  o["KingSafety(EG)"]        << Option(100, 0, 300, on_eval);
+  o["Threats(MG)"]           << Option(100, 0, 300, on_eval);
+  o["Threats(EG)"]           << Option(100, 0, 300, on_eval);
+  o["Space"]                 << Option(100, 0, 300, on_eval);
+  o["ExtendChecks"]          << Option(false);
+  o["Razoring"]              << Option(true);
+  o["Futility"]              << Option(true);
+  o["NullMove"]              << Option(true);
+  o["ProbCut"]               << Option(true);
+  o["Pruning"]               << Option(true);
+  o["LMR"]                   << Option(true);
+  o["MaxLMR"]                << Option(10, 0, 20);
   o["MultiPV"]               << Option(1, 1, 500);
   o["Skill Level"]           << Option(20, 0, 20);
   o["Move Overhead"]         << Option(30, 0, 5000);

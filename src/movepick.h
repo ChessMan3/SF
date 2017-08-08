@@ -49,14 +49,14 @@ typedef StatBoards<PIECE_NB, SQUARE_NB> PieceToBoards;
 /// ordering decisions. It uses ButterflyBoards as backing store.
 struct ButterflyHistory : public ButterflyBoards {
 
-  void update(Color c, Move m, int bonus) {
+  void update(Color c, Move m, int v) {
 
     const int D = 324;
     auto& entry = (*this)[c][from_to(m)];
 
-    assert(abs(bonus) <= D); // Consistency check for below formula
+    assert(abs(v) <= D); // Consistency check for below formula
 
-    entry += bonus * 32 - entry * abs(bonus) / D;
+    entry += v * 32 - entry * abs(v) / D;
 
     assert(abs(entry) <= 32 * D);
   }
@@ -65,27 +65,26 @@ struct ButterflyHistory : public ButterflyBoards {
 /// PieceToHistory is like ButterflyHistory, but is based on PieceToBoards
 struct PieceToHistory : public PieceToBoards {
 
-  void update(Piece pc, Square to, int bonus) {
+  void update(Piece pc, Square to, int v) {
 
     const int D = 936;
     auto& entry = (*this)[pc][to];
 
-    assert(abs(bonus) <= D); // Consistency check for below formula
+    assert(abs(v) <= D); // Consistency check for below formula
 
-    entry += bonus * 32 - entry * abs(bonus) / D;
+    entry += v * 32 - entry * abs(v) / D;
 
     assert(abs(entry) <= 32 * D);
   }
 };
 
-/// CounterMoveHistory stores counter moves indexed by [piece][to] of the previous
+/// CounterMoveStat stores counter moves indexed by [piece][to] of the previous
 /// move, see chessprogramming.wikispaces.com/Countermove+Heuristic
-typedef StatBoards<PIECE_NB, SQUARE_NB, Move> CounterMoveHistory;
+typedef StatBoards<PIECE_NB, SQUARE_NB, Move> CounterMoveStat;
 
-/// ContinuationHistory is the history of a given pair of moves, usually the
-/// current one given a previous one. History table is based on PieceToBoards
-/// instead of ButterflyBoards.
-typedef StatBoards<PIECE_NB, SQUARE_NB, PieceToHistory> ContinuationHistory;
+/// CounterMoveHistoryStat is like CounterMoveStat but instead of a move it
+/// stores a full history (based on PieceTo boards instead of ButterflyBoards).
+typedef StatBoards<PIECE_NB, SQUARE_NB, PieceToHistory> CounterMoveHistoryStat;
 
 
 /// MovePicker class is used to pick one pseudo legal move at a time from the
@@ -94,14 +93,17 @@ typedef StatBoards<PIECE_NB, SQUARE_NB, PieceToHistory> ContinuationHistory;
 /// when MOVE_NONE is returned. In order to improve the efficiency of the alpha
 /// beta algorithm, MovePicker attempts to return the moves which are most likely
 /// to get a cut-off first.
+namespace Search { struct Stack; }
 
 class MovePicker {
 public:
   MovePicker(const MovePicker&) = delete;
   MovePicker& operator=(const MovePicker&) = delete;
+
   MovePicker(const Position&, Move, Value);
-  MovePicker(const Position&, Move, Depth, const ButterflyHistory*, const PieceToHistory**, Square);
-  MovePicker(const Position&, Move, Depth, const ButterflyHistory*, const PieceToHistory**, Move, Move*);
+  MovePicker(const Position&, Move, Depth, Square);
+  MovePicker(const Position&, Move, Depth, Search::Stack*);
+
   Move next_move(bool skipQuiets = false);
 
 private:
@@ -110,14 +112,15 @@ private:
   ExtMove* end() { return endMoves; }
 
   const Position& pos;
-  const ButterflyHistory* mainHistory;
-  const PieceToHistory** contHistory;
-  Move ttMove, countermove, killers[2];
-  ExtMove *cur, *endMoves, *endBadCaptures;
-  int stage;
+  const Search::Stack* ss;
+  Move killers[2];
+  Move countermove;
+  Depth depth;
+  Move ttMove;
   Square recaptureSquare;
   Value threshold;
-  Depth depth;
+  int stage;
+  ExtMove *cur, *endMoves, *endBadCaptures;
   ExtMove moves[MAX_MOVES];
 };
 
