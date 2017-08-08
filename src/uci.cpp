@@ -117,6 +117,7 @@ namespace {
     string token;
 
     limits.startTime = now(); // As early as possible!
+    Threads.ponder = false;
 
     while (is >> token)
         if (token == "searchmoves")
@@ -133,7 +134,7 @@ namespace {
         else if (token == "movetime")  is >> limits.movetime;
         else if (token == "mate")      is >> limits.mate;
         else if (token == "infinite")  limits.infinite = 1;
-        else if (token == "ponder")    limits.ponder = 1;
+        else if (token == "ponder")    Threads.ponder = true;
 
     Threads.start_thinking(pos, States, limits);
   }
@@ -177,6 +178,15 @@ void UCI::loop(int argc, char* argv[]) {
       token.clear(); // getline() could return empty or blank line
       is >> skipws >> token;
 
+      // the folowing commands can not be executed unless the search is finished.
+      if (   token == "go"
+          || token == "bench"
+          || token == "perft"
+          || token == "eval"
+          || token == "setoption"
+          || token == "ucinewgame")
+          Threads.main()->wait_for_search_finished();
+
       // The GUI sends 'ponderhit' to tell us to ponder on the same move the
       // opponent has played. In case Threads.stopOnPonderhit is set we are
       // waiting for 'ponderhit' to stop the search (for instance because we
@@ -185,12 +195,9 @@ void UCI::loop(int argc, char* argv[]) {
       if (    token == "quit"
           ||  token == "stop"
           || (token == "ponderhit" && Threads.stopOnPonderhit))
-      {
           Threads.stop = true;
-          Threads.main()->start_searching(true); // Could be sleeping
-      }
       else if (token == "ponderhit")
-          Search::Limits.ponder = 0; // Switch to normal search
+          Threads.ponder = false; // Switch to normal search
 
       else if (token == "uci")
           sync_cout << "id name " << engine_info(true)

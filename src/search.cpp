@@ -25,6 +25,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "tzbook.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -192,13 +193,13 @@ void Search::clear() {
   for (Thread* th : Threads)
   {
       th->counterMoves.fill(MOVE_NONE);
-      th->mainHistory.fill(0);
+      th->history.fill(0);
 
-      for (auto& to : th->contHistory)
+      for (auto& to : th->continuationHistory)
           for (auto& h : to)
               h.fill(0);
 
-      th->contHistory[NO_PIECE][0].fill(CounterMovePruneThreshold - 1);
+      th->continuationHistory[NO_PIECE][0].fill(CounterMovePruneThreshold - 1);
   }
 
   Threads.main()->callsCnt = 0;
@@ -257,12 +258,23 @@ void MainThread::search() {
   }
   else
   {
+Move bookMove = MOVE_NONE;
+
+if (!Limits.infinite && !Limits.mate)
+bookMove = tzbook.probe2(rootPos);
+
+if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+{
+std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+}
+  else
+  {
       for (Thread* th : Threads)
           if (th != this)
               th->start_searching();
 
       Thread::search(); // Let's start searching!
-  }
+  }}
 
   // When playing in 'nodes as time' mode, subtract the searched nodes from
   // the available ones before exiting.
@@ -274,11 +286,8 @@ void MainThread::search() {
   // the UCI protocol states that we shouldn't print the best move before the
   // GUI sends a "stop" or "ponderhit" command. We therefore simply wait here
   // until the GUI sends one of those commands (which also raises Threads.stop).
-  if (!Threads.stop && (Limits.ponder || Limits.infinite))
-  {
+  while (!Threads.stop && (Threads.ponder || Limits.infinite))
       Threads.stopOnPonderhit = true;
-      wait(Threads.stop);
-  }
 
   // Stop the threads if not already stopped
   Threads.stop = true;
@@ -334,7 +343,7 @@ void Thread::search() {
 
   std::memset(ss-4, 0, 7 * sizeof(Stack));
   for (int i = 4; i > 0; i--)
-     (ss-i)->contHistory = &this->contHistory[NO_PIECE][0]; // Use as sentinel
+     (ss-i)->history = &this->continuationHistory[NO_PIECE][0]; // Use as sentinel
 
   bestValue = delta = alpha = -VALUE_INFINITE;
   beta = VALUE_INFINITE;
@@ -496,7 +505,7 @@ void Thread::search() {
               {
                   // If we are allowed to ponder do not stop the search now but
                   // keep pondering until the GUI sends "ponderhit" or "stop".
-                  if (Limits.ponder)
+                  if (Threads.ponder)
                       Threads.stopOnPonderhit = true;
                   else
                       Threads.stop = true;
@@ -591,7 +600,7 @@ namespace {
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
     ss->currentMove = (ss+1)->excludedMove = bestMove = MOVE_NONE;
-    ss->contHistory = &thisThread->contHistory[NO_PIECE][0];
+    ss->history = &thisThread->continuationHistory[NO_PIECE][0];
     (ss+2)->killers[0] = (ss+2)->killers[1] = MOVE_NONE;
     Square prevSq = to_sq((ss-1)->currentMove);
 
@@ -629,7 +638,7 @@ namespace {
             else if (!pos.capture_or_promotion(ttMove))
             {
                 int penalty = -stat_bonus(depth);
-                thisThread->mainHistory.update(pos.side_to_move(), ttMove, penalty);
+                thisThread->history.update(pos.side_to_move(), ttMove, penalty);
                 update_continuation_histories(ss, pos.moved_piece(ttMove), to_sq(ttMove), penalty);
             }
         }
@@ -734,7 +743,7 @@ namespace {
         Depth R = ((823 + 67 * depth / ONE_PLY) / 256 + std::min((eval - beta) / PawnValueMg, 3)) * ONE_PLY;
 
         ss->currentMove = MOVE_NULL;
-        ss->contHistory = &thisThread->contHistory[NO_PIECE][0];
+        ss->history = &thisThread->continuationHistory[NO_PIECE][0];
 
         pos.do_null_move(st);
         Value nullValue = depth-R < ONE_PLY ? -qsearch<NonPV, false>(pos, ss+1, -beta, -beta+1)
@@ -776,7 +785,7 @@ namespace {
             if (pos.legal(move))
             {
                 ss->currentMove = move;
-                ss->contHistory = &thisThread->contHistory[pos.moved_piece(move)][to_sq(move)];
+                ss->history = &thisThread->continuationHistory[pos.moved_piece(move)][to_sq(move)];
 
                 assert(depth >= 5 * ONE_PLY);
                 pos.do_move(move, st);
@@ -801,10 +810,10 @@ namespace {
 
 moves_loop: // When in check search starts from here
 
-    const PieceToHistory* contHist[] = { (ss-1)->contHistory, (ss-2)->contHistory, nullptr, (ss-4)->contHistory };
+    const PieceToHistory* contHist[] = { (ss-1)->history, (ss-2)->history, nullptr, (ss-4)->history };
     Move countermove = thisThread->counterMoves[pos.piece_on(prevSq)][prevSq];
 
-    MovePicker mp(pos, ttMove, depth, &thisThread->mainHistory, contHist, countermove, ss->killers);
+    MovePicker mp(pos, ttMove, depth, &thisThread->history, contHist, countermove, ss->killers);
     value = bestValue; // Workaround a bogus 'uninitialized' warning under gcc
     improving =   ss->staticEval >= (ss-2)->staticEval
             /* || ss->staticEval == VALUE_NONE Already implicit in the previous condition */
@@ -942,7 +951,7 @@ moves_loop: // When in check search starts from here
 
       // Update the current move (this must be done after singular extension search)
       ss->currentMove = move;
-      ss->contHistory = &thisThread->contHistory[moved_piece][to_sq(move)];
+      ss->history = &thisThread->continuationHistory[moved_piece][to_sq(move)];
 
       // Step 14. Make the move
       pos.do_move(move, st, givesCheck);
@@ -974,7 +983,7 @@ moves_loop: // When in check search starts from here
                        && !pos.see_ge(make_move(to_sq(move), from_sq(move))))
                   r -= 2 * ONE_PLY;
 
-              ss->statScore =  thisThread->mainHistory[~pos.side_to_move()][from_to(move)]
+              ss->statScore =  thisThread->history[~pos.side_to_move()][from_to(move)]
                              + (*contHist[0])[moved_piece][to_sq(move)]
                              + (*contHist[1])[moved_piece][to_sq(move)]
                              + (*contHist[3])[moved_piece][to_sq(move)]
@@ -1241,7 +1250,7 @@ moves_loop: // When in check search starts from here
     // queen promotions and checks (only if depth >= DEPTH_QS_CHECKS) will
     // be generated.
     const PieceToHistory* contHist[4] = {};
-    MovePicker mp(pos, ttMove, depth, &pos.this_thread()->mainHistory, contHist, to_sq((ss-1)->currentMove));
+    MovePicker mp(pos, ttMove, depth, &pos.this_thread()->history, contHist, to_sq((ss-1)->currentMove));
 
     // Loop through the moves until no moves remain or a beta cutoff occurs
     while ((move = mp.next_move()) != MOVE_NONE)
@@ -1392,7 +1401,7 @@ moves_loop: // When in check search starts from here
 
     for (int i : {1, 2, 4})
         if (is_ok((ss-i)->currentMove))
-            (ss-i)->contHistory->update(pc, to, bonus);
+            (ss-i)->history->update(pc, to, bonus);
   }
 
 
@@ -1409,19 +1418,19 @@ moves_loop: // When in check search starts from here
 
     Color c = pos.side_to_move();
     Thread* thisThread = pos.this_thread();
-    thisThread->mainHistory.update(c, move, bonus);
+    thisThread->history.update(c, move, bonus);
     update_continuation_histories(ss, pos.moved_piece(move), to_sq(move), bonus);
 
     if (is_ok((ss-1)->currentMove))
     {
         Square prevSq = to_sq((ss-1)->currentMove);
-        thisThread->counterMoves[pos.piece_on(prevSq)][prevSq] = move;
+        thisThread->counterMoves[pos.piece_on(prevSq)][prevSq]=move;
     }
 
     // Decrease all the other played quiet moves
     for (int i = 0; i < quietsCnt; ++i)
     {
-        thisThread->mainHistory.update(c, quiets[i], -bonus);
+        thisThread->history.update(c, quiets[i], -bonus);
         update_continuation_histories(ss, pos.moved_piece(quiets[i]), to_sq(quiets[i]), -bonus);
     }
   }
@@ -1486,7 +1495,7 @@ moves_loop: // When in check search starts from here
     }
 
     // An engine may not stop pondering until told so by the GUI
-    if (Limits.ponder)
+    if (Threads.ponder)
         return;
 
     if (   (Limits.use_time_management() && elapsed > Time.maximum() - 10)

@@ -68,24 +68,12 @@ void Thread::wait_for_search_finished() {
 }
 
 
-/// Thread::wait() waits on sleep condition until condition is true
-
-void Thread::wait(std::atomic_bool& condition) {
-
-  std::unique_lock<Mutex> lk(mutex);
-  sleepCondition.wait(lk, [&]{ return bool(condition); });
-}
-
-
 /// Thread::start_searching() wakes up the thread that will start the search
 
-void Thread::start_searching(bool resume) {
+void Thread::start_searching() {
 
   std::unique_lock<Mutex> lk(mutex);
-
-  if (!resume)
-      searching = true;
-
+  searching = true;
   sleepCondition.notify_one();
 }
 
@@ -184,8 +172,6 @@ uint64_t ThreadPool::tb_hits() const {
 
 void ThreadPool::start_thinking(Position& pos, StateListPtr& states,
                                 const Search::LimitsType& limits) {
-
-  main()->wait_for_search_finished();
 
   stopOnPonderhit = stop = false;
   Search::Limits = limits;

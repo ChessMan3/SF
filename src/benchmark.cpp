@@ -28,6 +28,7 @@
 #include "search.h"
 #include "thread.h"
 #include "uci.h"
+#include "tzbook.h"
 
 using namespace std;
 
@@ -151,7 +152,9 @@ void benchmark(const Position& current, istream& is) {
 
   uint64_t nodes = 0;
   TimePoint elapsed = now();
+  Threads.ponder = false;
   Position pos;
+  tzbook.enabled = false;
 
   for (size_t i = 0; i < fens.size(); ++i)
   {
@@ -174,6 +177,7 @@ void benchmark(const Position& current, istream& is) {
 
   elapsed = now() - elapsed + 1; // Ensure positivity to avoid a 'divide by zero'
 
+  tzbook.enabled = true;
   dbg_print(); // Just before exiting
 
   cerr << "\n==========================="

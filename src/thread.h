@@ -52,7 +52,7 @@ public:
   virtual ~Thread();
   virtual void search();
   void idle_loop();
-  void start_searching(bool resume = false);
+  void start_searching();
   void wait_for_search_finished();
   void wait(std::atomic_bool& condition);
 
@@ -68,8 +68,8 @@ public:
   Depth rootDepth;
   Depth completedDepth;
   CounterMoveHistory counterMoves;
-  ButterflyHistory mainHistory;
-  ContinuationHistory contHistory;
+  ButterflyHistory history;
+  ContinuationHistory continuationHistory;
 };
 
 
@@ -101,7 +101,7 @@ struct ThreadPool : public std::vector<Thread*> {
   uint64_t nodes_searched() const;
   uint64_t tb_hits() const;
 
-  std::atomic_bool stop, stopOnPonderhit;
+  std::atomic_bool stop, ponder, stopOnPonderhit;
 
 private:
   StateListPtr setupStates;
