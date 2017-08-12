@@ -67,9 +67,9 @@ public:
   Search::RootMoves rootMoves;
   Depth rootDepth;
   Depth completedDepth;
-  CounterMoveHistory counterMoves;
-  ButterflyHistory mainHistory;
-  ContinuationHistory contHistory;
+  CounterMoveStat counterMoves;
+  ButterflyHistory history;
+  CounterMoveHistoryStat counterMoveHistory;
 };
 
 
