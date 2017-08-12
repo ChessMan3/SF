@@ -20,6 +20,10 @@
 
 #include <cstring>   // For std::memset
 #include <iostream>
+//dani170724
+#include <fstream>
+#include "uci.h"
+//enddani170724
 
 #include "bitboard.h"
 #include "tt.h"
@@ -63,6 +67,36 @@ void TranspositionTable::clear() {
   std::memset(table, 0, clusterCount * sizeof(Cluster));
 }
 
+//dani170724
+void TranspositionTable::set_hash_file_name(const std::string& fname) { hashfilename = fname; }
+
+bool TranspositionTable::save() {
+	std::ofstream b_stream(hashfilename,
+		std::fstream::out | std::fstream::binary);
+	if (b_stream)
+	{
+		//b_stream.write(reinterpret_cast<char const *>(table), clusterCount * sizeof(Cluster));
+		for (long long i = 0; i < clusterCount * sizeof(Cluster); i += (1 << 30)) { //1GB
+			long long j = __min((1 << 30), (clusterCount * sizeof(Cluster)) - i);
+			b_stream.write(reinterpret_cast<char const *>(table) + i, j);
+		}
+		return (b_stream.good());
+	}
+	return false;
+}
+
+void TranspositionTable::load() {
+	//file size: https://stackoverflow.com/questions/2409504/using-c-filestreams-fstream-how-can-you-determine-the-size-of-a-file
+	std::ifstream file;
+	file.open(hashfilename, std::ios::in | std::ios::binary);
+	file.ignore(std::numeric_limits<std::streamsize>::max());
+	std::streamsize size = file.gcount();
+	file.clear();   //  Since ignore will have set eof.
+	resize(size / 1024 / 1024);
+	file.seekg(0, std::ios::beg);
+	file.read(reinterpret_cast<char *>(table), clusterCount * sizeof(Cluster));
+}
+//enddani170724
 
 /// TranspositionTable::probe() looks up the current position in the transposition
 /// table. It returns true and a pointer to the TTEntry if the position is found.
