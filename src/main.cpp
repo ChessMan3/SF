@@ -26,7 +26,8 @@
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
-#include "syzygy/tbprobe.h"
+#include "tbprobe.h"
+#include "tzbook.h"
 
 namespace PSQT {
   void init();

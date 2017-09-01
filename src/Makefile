@@ -28,7 +28,8 @@ ifeq ($(KERNEL),Linux)
 endif
 
 ### Executable name
-EXE = stockfish
+EXE = SF-McBrain-27
+# bench =  5127083
 
 ### Installation dir definitions
 PREFIX = /usr/local
@@ -36,11 +37,12 @@ BINDIR = $(PREFIX)/bin
 
 ### Built-in benchmark for pgo-builds
 PGOBENCH = ./$(EXE) bench
+PGOBENCH2 = ./$(EXE) bench 16 2 10
 
 ### Object files
 OBJS = benchmark.o bitbase.o bitboard.o endgame.o evaluate.o main.o \
 	material.o misc.o movegen.o movepick.o pawns.o position.o psqt.o \
-	search.o thread.o timeman.o tt.o uci.o ucioption.o syzygy/tbprobe.o
+	search.o thread.o timeman.o tt.o uci.o ucioption.o tbprobe.o tzbook.o
 
 ### ==========================================================================
 ### Section 2. High-level Configuration
@@ -152,7 +154,7 @@ endif
 ifeq ($(COMP),gcc)
 	comp=gcc
 	CXX=g++
-	CXXFLAGS += -pedantic -Wextra -Wshadow
+	CXXFLAGS += -pedantic -Wextra -Wshadow -static-libstdc++
 
 	ifeq ($(ARCH),armv7)
 		ifeq ($(OS),Android)
@@ -350,7 +352,7 @@ endif
 ifeq ($(comp),gcc)
 	ifeq ($(optimize),yes)
 	ifeq ($(debug),no)
-		CXXFLAGS += -flto
+		CXXFLAGS += -flto -fno-rtti
 		LDFLAGS += $(CXXFLAGS)
 	endif
 	endif
@@ -431,21 +433,28 @@ help:
 
 build: config-sanity
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) all
+	strip $(EXE)
+	cp $(EXE) /Users/michaelbyrne/cluster.mfb/$(EXE)
 
 profile-build: config-sanity objclean profileclean
 	@echo ""
-	@echo "Step 1/4. Building instrumented executable ..."
+	@echo "Step 1/5. Building instrumented executable ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) $(profile_make)
 	@echo ""
-	@echo "Step 2/4. Running benchmark for pgo-build ..."
+	@echo "Step 2/5. Running benchmark for pgo-build ..."
 	$(PGOBENCH) > /dev/null
 	@echo ""
-	@echo "Step 3/4. Building optimized executable ..."
+	@echo "Step 3/5. Running benchmark for pgo-build ..."
+	$(PGOBENCH2) > /dev/null
+	@echo ""
+	@echo "Step 4/5. Building optimized executable ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) objclean
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) $(profile_use)
 	@echo ""
-	@echo "Step 4/4. Deleting profile data ..."
+	@echo "Step 5/5. Deleting profile data ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) profileclean
+	strip $(EXE)
+	cp $(EXE) /Users/michaelbyrne/cluster.mfb/$(EXE)
 
 strip:
 	strip $(EXE)
@@ -536,7 +545,7 @@ gcc-profile-make:
 
 gcc-profile-use:
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) \
-	EXTRACXXFLAGS='-fprofile-use -fno-peel-loops -fno-tracer' \
+	EXTRACXXFLAGS='-fprofile-use -fprofile-correction  -fno-peel-loops -fno-tracer' \
 	EXTRALDFLAGS='-lgcov' \
 	all
 

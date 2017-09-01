@@ -45,6 +45,10 @@ struct Stack {
   Value staticEval;
   int statScore;
   int moveCount;
+  Depth newDepth;
+  uint8_t forcedMove;
+  uint8_t forcingTree;
+	
 };
 
 

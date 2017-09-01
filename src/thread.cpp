@@ -24,7 +24,7 @@
 #include "movegen.h"
 #include "search.h"
 #include "thread.h"
-#include "syzygy/tbprobe.h"
+#include "tbprobe.h"
 
 ThreadPool Threads; // Global object
 

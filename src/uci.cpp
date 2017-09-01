@@ -31,7 +31,7 @@
 #include "tt.h"
 #include "timeman.h"
 #include "uci.h"
-#include "syzygy/tbprobe.h"
+#include "tbprobe.h"
 
 using namespace std;
 
@@ -63,6 +63,9 @@ namespace {
     else if (token == "fen")
         while (is >> token && token != "moves")
             fen += token + " ";
+    else if (token == "f")
+	while (is >> token && token != "moves")
+	    fen += token + " ";
     else
         return;
 
@@ -115,7 +118,7 @@ namespace {
     limits.startTime = now(); // As early as possible!
 
     while (is >> token)
-        if (token == "searchmoves")
+        if (token == "searchmoves" || token == "sm")
             while (is >> token)
                 limits.searchmoves.push_back(UCI::to_move(pos, token));
 
@@ -125,12 +128,13 @@ namespace {
         else if (token == "binc")      is >> limits.inc[BLACK];
         else if (token == "movestogo") is >> limits.movestogo;
         else if (token == "depth")     is >> limits.depth;
+		else if (token == "d")         is >> limits.depth;
         else if (token == "nodes")     is >> limits.nodes;
         else if (token == "movetime")  is >> limits.movetime;
         else if (token == "mate")      is >> limits.mate;
-        else if (token == "perft")     is >> limits.perft;
         else if (token == "infinite")  limits.infinite = 1;
-        else if (token == "ponder")    ponderMode = true;
+		else if (token == "i")         limits.infinite = 1;
+        else if (token == "ponder")    ponderMode = true;;
 
     Threads.start_thinking(pos, states, limits, ponderMode);
   }
@@ -201,6 +205,9 @@ void UCI::loop(int argc, char* argv[]) {
   do {
       if (argc == 1 && !getline(cin, cmd)) // Block here waiting for input or EOF
           cmd = "quit";
+	  else if (token == "q")
+		  cmd = "quit";
+
 
       istringstream is(cmd);
 
@@ -213,6 +220,7 @@ void UCI::loop(int argc, char* argv[]) {
       // normal search. In case Threads.stopOnPonderhit is set we are waiting for
       // 'ponderhit' to stop the search, for instance if max search depth is reached.
       if (    token == "quit"
+		  ||  token == "q"
           ||  token == "stop"
           || (token == "ponderhit" && Threads.stopOnPonderhit))
           Threads.stop = true;
@@ -226,20 +234,35 @@ void UCI::loop(int argc, char* argv[]) {
                     << "\nuciok"  << sync_endl;
 
       else if (token == "setoption")  setoption(is);
+	  else if (token == "so")         setoption(is);
       else if (token == "go")         go(pos, is, states);
-      else if (token == "position")   position(pos, is, states);
+	  else if (token == "g")          go(pos, is, states);
+	  else if (token == "q")          cmd = "quit";
+	  else if (token == "position")
+	  {
+		  position(pos, is, states);
+		  if (Options["Clean Search"] == 1)
+			  Search::clear();
+	  }
+	  else if (token == "p")
+	  {
+		  position(pos, is, states);
+		  if (Options["Clean Search"] == 1)
+			  Search::clear();
+	  }
       else if (token == "ucinewgame") Search::clear();
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging
       else if (token == "flip")  pos.flip();
       else if (token == "bench") bench(pos, is, states);
+	  else if (token == "b") bench(pos, is, states);
       else if (token == "d")     sync_cout << pos << sync_endl;
       else if (token == "eval")  sync_cout << Eval::trace(pos) << sync_endl;
       else
           sync_cout << "Unknown command: " << cmd << sync_endl;
 
-  } while (token != "quit" && argc == 1); // Command line args are one-shot
+  } while (token != "quit" && token != "q" && argc == 1); // Command line args are one-shot
 }
 
 
