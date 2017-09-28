@@ -272,7 +272,7 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Th
   // 5-6. Halfmove clock and fullmove number
   ss >> std::skipws >> st->rule50 >> gamePly;
 
-  // Convert from fullmove starting from 1 to ply starting from 0,
+  // Convert from fullmove starting from 1 to gamePly starting from 0,
   // handle also common incorrect FEN with fullmove = 0.
   gamePly = std::max(2 * (gamePly - 1), 0) + (sideToMove == BLACK);
 
@@ -1004,21 +1004,17 @@ bool Position::see_ge(Move m, Value threshold) const {
   Bitboard occupied, stmAttackers;
 
   balance = PieceValue[MG][piece_on(to)];
-  occupied = 0;
 
   if (balance < threshold)
       return false;
 
-  if (nextVictim == KING)
-      return true;
-
   balance -= PieceValue[MG][nextVictim];
 
-  if (balance >= threshold)
+  if (balance >= threshold) // Always true if nextVictim == KING
       return true;
 
   bool relativeStm = true; // True if the opponent is to move
-  occupied ^= pieces() ^ from ^ to;
+  occupied = pieces() ^ from ^ to;
 
   // Find all attackers to the destination square, with the moving piece removed,
   // but possibly an X-ray attacker added behind it.
@@ -1075,11 +1071,10 @@ bool Position::is_draw(int ply) const {
   {
       stp = stp->previous->previous;
 
-      // At root position ply is 1, so return a draw score if a position
-      // repeats once earlier but strictly after the root, or repeats twice
-      // before or at the root.
+      // Return a draw score if a position repeats once earlier but strictly
+      // after the root, or repeats twice before or at the root.
       if (   stp->key == st->key
-          && ++cnt + (ply - 1 > i) == 2)
+          && ++cnt + (ply > i) == 2)
           return true;
   }
 
