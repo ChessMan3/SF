@@ -18,55 +18,35 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <iostream>
-#include <utility>
-#include <thread>
-#include <chrono>
-#include <functional>
-#include <atomic>
+/*
+  The code in this file is based on the opening book code in PolyGlot
+  by Fabien Letouzey. PolyGlot is available under the GNU General
+  Public License, and can be downloaded from http://wbec-ridderkerk.nl
+ */
 
+#ifndef BOOK_H_INCLUDED
+#define BOOK_H_INCLUDED
 
-#include "bitboard.h"
-#include "evaluate.h"
+#include <fstream>
+#include <string>
+
+#include "misc.h"
 #include "position.h"
-#include "search.h"
-#include "thread.h"
-#include "tt.h"
-#include "uci.h"
-#include "syzygy/tbprobe.h"
-#include "tzbook.h"
 
+class PolyglotBook : private std::ifstream {
+public:
+  PolyglotBook();
+ ~PolyglotBook();
+  Move probe(const Position& pos, const std::string& fName, bool pickBest);
 
-namespace PSQT {
-  void init();
-}
+private:
+  template<typename T> PolyglotBook& operator>>(T& n);
 
-int main(int argc, char* argv[]) {
-	
-	{
+  bool open(const char* fName);
+  size_t find_first(Key key);
 
-    std::time_t result = std::time(NULL);
-    std::cout << std::asctime(std::localtime(&result));
+  PRNG rng;
+  std::string fileName;
+};
 
-}
-
-  std::cout << engine_info() << std::endl;
- 
-  UCI::init(Options);
-  PSQT::init();
-  Bitboards::init();
-  Position::init();
-  Bitbases::init();
-  Eval::init();
-  Search::init();
-  Pawns::init();
-  Tablebases::init(Options["SyzygyPath"]);
-  TT.resize(Options["Hash"]);
-  Threads.init(Options["Threads"]);
-  Search::clear(); // After threads are up
-  tzbook.init(Options["BookPath"]);
-  UCI::loop(argc, argv);
-
-  Threads.exit();
-  return 0;
-}
+#endif // #ifndef BOOK_H_INCLUDED
