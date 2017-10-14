@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  SugaR, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  SugaR is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  SugaR is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -25,6 +25,8 @@
 #include <iostream>
 #include <sstream>
 
+#include "book.h"
+#include "tzbook.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -130,12 +132,14 @@ namespace {
       }
     }
 
-    Key expectedPosKey;
     int stableCnt;
+    Key expectedPosKey;
     Move pv[3];
   };
-
+  
+  bool doNull;
   EasyMoveManager EasyMove;
+  bool cleanSearch;
   Value DrawValue[COLOR_NB];
 
   template <NodeType NT>
@@ -150,39 +154,15 @@ namespace {
   void update_continuation_histories(Stack* ss, Piece pc, Square to, int bonus);
   void update_stats(const Position& pos, Stack* ss, Move move, Move* quiets, int quietsCnt, int bonus);
 
-  // perft() is our utility to verify move generation. All the leaf nodes up
-  // to the given depth are generated and counted, and the sum is returned.
-  template<bool Root>
-  uint64_t perft(Position& pos, Depth depth) {
-
-    StateInfo st;
-    uint64_t cnt, nodes = 0;
-    const bool leaf = (depth == 2 * ONE_PLY);
-
-    for (const auto& m : MoveList<LEGAL>(pos))
-    {
-        if (Root && depth <= ONE_PLY)
-            cnt = 1, nodes++;
-        else
-        {
-            pos.do_move(m, st);
-            cnt = leaf ? MoveList<LEGAL>(pos).size() : perft<false>(pos, depth - ONE_PLY);
-            nodes += cnt;
-            pos.undo_move(m);
-        }
-        if (Root)
-            sync_cout << UCI::move(m, pos.is_chess960()) << ": " << cnt << sync_endl;
-    }
-    return nodes;
-  }
-
 } // namespace
 
 
 /// Search::init() is called during startup to initialize various lookup tables
 
-void Search::init() {
+void Search::init(bool OptioncleanSearch) {
 
+  cleanSearch = OptioncleanSearch;
+	
   for (int imp = 0; imp <= 1; ++imp)
       for (int d = 1; d < 64; ++d)
           for (int mc = 1; mc < 64; ++mc)
@@ -209,6 +189,9 @@ void Search::init() {
 
 void Search::clear() {
 
+  if (Options["NeverClearHash"])
+	return;
+
   Threads.main()->wait_for_search_finished();
 
   Time.availableNodes = 0;
@@ -222,25 +205,49 @@ void Search::clear() {
 }
 
 
+/// Search::perft() is our utility to verify move generation. All the leaf nodes
+/// up to the given depth are generated and counted, and the sum is returned.
+template<bool Root>
+uint64_t Search::perft(Position& pos, Depth depth) {
+
+  StateInfo st;
+  uint64_t cnt, nodes = 0;
+  const bool leaf = (depth == 2 * ONE_PLY);
+
+  for (const auto& m : MoveList<LEGAL>(pos))
+  {
+      if (Root && depth <= ONE_PLY)
+          cnt = 1, nodes++;
+      else
+      {
+          pos.do_move(m, st);
+          cnt = leaf ? MoveList<LEGAL>(pos).size() : perft<false>(pos, depth - ONE_PLY);
+          nodes += cnt;
+          pos.undo_move(m);
+      }
+      if (Root)
+          sync_cout << UCI::move(m, pos.is_chess960()) << ": " << cnt << sync_endl;
+  }
+  return nodes;
+}
+
+template uint64_t Search::perft<true>(Position&, Depth);
+
+
 /// MainThread::search() is called by the main thread when the program receives
 /// the UCI 'go' command. It searches from the root position and outputs the "bestmove".
 
 void MainThread::search() {
 
-  if (Limits.perft)
-  {
-      nodes = perft<true>(rootPos, Limits.perft * ONE_PLY);
-      sync_cout << "\nNodes searched: " << nodes << "\n" << sync_endl;
-      return;
-  }
-
+  static PolyglotBook book; // Defined static to initialize the PRNG only once
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
-  TT.new_search();
+  if (!Limits.infinite)
+	TT.new_search();
+  else
+	TT.infinite_search();
 
-  int contempt = Options["Contempt"] * PawnValueEg / 100; // From centipawns
-  DrawValue[ us] = VALUE_DRAW - Value(contempt);
-  DrawValue[~us] = VALUE_DRAW + Value(contempt);
+  doNull = Options["NullMove"];
 
   if (rootMoves.empty())
   {
@@ -251,13 +258,39 @@ void MainThread::search() {
   }
   else
   {
+      if (Options["OwnBook"] && !Limits.infinite && !Limits.mate)
+      {
+          Move bookMove = book.probe(rootPos, Options["Book File"], Options["Best Book Line"]);
+
+          if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+          {
+              std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+              goto finalize;
+          }
+      }
+      Move bookMove = MOVE_NONE;
+
+      if (!Limits.infinite && !Limits.mate)
+          bookMove = tzbook.probe2(rootPos);
+
+      if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+      {
+          std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
       for (Thread* th : Threads)
+              if (th != this)
+                 std::swap(th->rootMoves[0], *std::find(th->rootMoves.begin(), th->rootMoves.end(), bookMove));
+      }
+      else
+      {
+          for (Thread* th : Threads)
           if (th != this)
               th->start_searching();
 
       Thread::search(); // Let's start searching!
+      }
   }
 
+finalize:
   // When we reach the maximum depth, we can arrive here without a raise of
   // Threads.stop. However, if we are pondering or in an infinite search,
   // the UCI protocol states that we shouldn't print the best move before the
@@ -332,8 +365,12 @@ void Thread::search() {
   for (int i = 4; i > 0; i--)
      (ss-i)->contHistory = &this->contHistory[NO_PIECE][0]; // Use as sentinel
 
+  if (cleanSearch) 
+	  Search::clear();
+  
   bestValue = delta = alpha = -VALUE_INFINITE;
   beta = VALUE_INFINITE;
+  Color us = rootPos.side_to_move();
 
   if (mainThread)
   {
@@ -346,12 +383,17 @@ void Thread::search() {
   size_t multiPV = Options["MultiPV"];
   Skill skill(Options["Skill Level"]);
 
+  if (Options["Analysis Mode"]) multiPV=256;
+  
   // When playing with strength handicap enable MultiPV search that we will
   // use behind the scenes to retrieve a set of possible moves.
   if (skill.enabled())
       multiPV = std::max(multiPV, (size_t)4);
 
   multiPV = std::min(multiPV, rootMoves.size());
+
+
+  int contempt = Options["Contempt Factor"] * PawnValueEg / 100; // From centipawns
 
   // Iterative deepening loop until requested to stop or the target depth is reached
   while (   (rootDepth += ONE_PLY) < DEPTH_MAX
@@ -387,6 +429,7 @@ void Thread::search() {
               delta = Value(18);
               alpha = std::max(rootMoves[PVIdx].previousScore - delta,-VALUE_INFINITE);
               beta  = std::min(rootMoves[PVIdx].previousScore + delta, VALUE_INFINITE);
+			  contempt = Options["Contempt Factor"] * PawnValueEg / 100;
           }
 
           // Start with a small aspiration window and, in the case of a fail
@@ -395,6 +438,11 @@ void Thread::search() {
           while (true)
           {
               bestValue = ::search<PV>(rootPos, ss, alpha, beta, rootDepth, false, false);
+              
+              contempt += bestValue <= alpha && bestValue < VALUE_DRAW ? -int(delta / 4 + 5) 
+                        : bestValue >= beta  && bestValue > VALUE_DRAW ?  int(delta / 4 + 5) : 0;
+              DrawValue[ us] = VALUE_DRAW - Value(contempt);
+              DrawValue[~us] = VALUE_DRAW + Value(contempt);
 
               // Bring the best move to the front. It is critical that sorting
               // is done with a stable algorithm because all the values but the
@@ -585,7 +633,7 @@ namespace {
     (ss+1)->ply = ss->ply + 1;
     ss->currentMove = (ss+1)->excludedMove = bestMove = MOVE_NONE;
     ss->contHistory = &thisThread->contHistory[NO_PIECE][0];
-    (ss+2)->killers[0] = (ss+2)->killers[1] = MOVE_NONE;
+    (ss+2)->killers[0] = (ss+2)->killers[1] = (ss+2)->killers[2] = (ss+2)->killers[3] = MOVE_NONE;
     Square prevSq = to_sq((ss-1)->currentMove);
 
     // Step 4. Transposition table lookup. We don't want the score of a partial
@@ -613,6 +661,14 @@ namespace {
             {
                 if (!pos.capture_or_promotion(ttMove))
                     update_stats(pos, ss, ttMove, nullptr, 0, stat_bonus(depth));
+                else if(type_of(ttMove) == PROMOTION || !pos.see_ge(ttMove, VALUE_ZERO))
+				{
+					if (ss->killers[2] != ttMove)
+					{
+						ss->killers[3] = ss->killers[2];
+						ss->killers[2] = ttMove;
+					}
+				}
 
                 // Extra penalty for a quiet TT move in previous ply when it gets refuted
                 if ((ss-1)->moveCount == 1 && !pos.captured_piece())
@@ -715,7 +771,8 @@ namespace {
         return eval;
 
     // Step 8. Null move search with verification search (is omitted in PV nodes)
-    if (   !PvNode
+    if (    doNull
+        && !PvNode
         &&  eval >= beta
         && (ss->staticEval >= beta - 35 * (depth / ONE_PLY - 6) || depth >= 13 * ONE_PLY)
         &&  pos.non_pawn_material(pos.side_to_move()))
@@ -802,6 +859,9 @@ moves_loop: // When in check search starts from here
     improving =   ss->staticEval >= (ss-2)->staticEval
             /* || ss->staticEval == VALUE_NONE Already implicit in the previous condition */
                ||(ss-2)->staticEval == VALUE_NONE;
+
+	bool greatlyImproving = (ss - 0)->staticEval > (ss - 2)->staticEval + 16
+		 && (ss - 2)->staticEval > (ss - 4)->staticEval + 16;
 
     singularExtensionNode =   !rootNode
                            &&  depth >= 8 * ONE_PLY
@@ -992,10 +1052,20 @@ moves_loop: // When in check search starts from here
               // Decrease/increase reduction for moves with a good/bad history
               r = std::max(DEPTH_ZERO, (r / ONE_PLY - ss->statScore / 20000) * ONE_PLY);
           }
+          // The "Analysis Mode" option looks SugaR to look at more positions per search depth, but SugaR will play
+          // weaker overall.  It also sets the "MultiPV" option to 256 to allow SugaR to look at more nodes per
+          // depth and may help in analysis.
+		  if ( ( ss->ply < depth / 2 - ONE_PLY) && Options["Analysis Mode"] )
+		    r = DEPTH_ZERO;
+		
 
           Depth d = std::max(newDepth - r, ONE_PLY);
 
-          value = -search<NonPV>(pos, ss+1, -(alpha+1), -alpha, d, true, false);
+		  bool foo = PvNode && !moveCountPruning && greatlyImproving && ss->staticEval > alpha;
+		  // && "iteration depth" >= 10 * ONE_PLY;
+		  // or && "iteration depth" >= 4 * ONE_PLY
+
+          value = -search<NonPV>(pos, ss+1, -(alpha+1), -alpha, d, true, foo);
 
           doFullDepthSearch = (value > alpha && d != newDepth);
       }
@@ -1113,6 +1183,15 @@ moves_loop: // When in check search starts from here
         // Quiet best move: update move sorting heuristics
         if (!pos.capture_or_promotion(bestMove))
             update_stats(pos, ss, bestMove, quietsSearched, quietCount, stat_bonus(depth));
+        else if(type_of(bestMove) == PROMOTION || quietCount > 3)
+		{
+			if (ss->killers[2] != bestMove)
+			{
+				ss->killers[3] = ss->killers[2];
+				ss->killers[2] = bestMove;
+			}
+		}
+
 
         // Extra penalty for a quiet TT move in previous ply when it gets refuted
         if ((ss-1)->moveCount == 1 && !pos.captured_piece())
@@ -1583,10 +1662,10 @@ bool RootMove::extract_ponder_from_tt(Position& pos) {
 
 void Tablebases::filter_root_moves(Position& pos, Search::RootMoves& rootMoves) {
 
+    Cardinality = Options["Use Syzygy"] *6;
     RootInTB = false;
-    UseRule50 = Options["Syzygy50MoveRule"];
-    ProbeDepth = Options["SyzygyProbeDepth"] * ONE_PLY;
-    Cardinality = Options["SyzygyProbeLimit"];
+    UseRule50 = true;
+    ProbeDepth = 1 * ONE_PLY;
 
     // Skip TB probing when no TB found: !TBLargest -> !TB::Cardinality
     if (Cardinality > MaxCardinality)

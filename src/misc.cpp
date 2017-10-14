@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  SugaR, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  SugaR is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  SugaR is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -29,10 +29,12 @@
 // the calls at compile time), try to load them at runtime. To do this we need
 // first to define the corresponding function pointers.
 extern "C" {
-typedef bool(*fun1_t)(LOGICAL_PROCESSOR_RELATIONSHIP,
+typedef bool(WINAPI *fun1_t)(LOGICAL_PROCESSOR_RELATIONSHIP,
                       PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, PDWORD);
-typedef bool(*fun2_t)(USHORT, PGROUP_AFFINITY);
-typedef bool(*fun3_t)(HANDLE, CONST GROUP_AFFINITY*, PGROUP_AFFINITY);
+typedef bool(WINAPI *fun2_t)(USHORT, PGROUP_AFFINITY);
+typedef bool(WINAPI *fun3_t)(HANDLE, CONST GROUP_AFFINITY*, PGROUP_AFFINITY);
+
+#include "VersionHelpers.h"
 }
 #endif
 
@@ -41,7 +43,7 @@ typedef bool(*fun3_t)(HANDLE, CONST GROUP_AFFINITY*, PGROUP_AFFINITY);
 #include <iostream>
 #include <sstream>
 #include <vector>
-
+#include <thread>
 #include "misc.h"
 #include "thread.h"
 
@@ -116,13 +118,16 @@ public:
 /// the program was compiled) or "Stockfish <Version>", depending on whether
 /// Version is empty.
 
-const string engine_info(bool to_uci) {
+const std::string engine_info(bool to_uci) {
 
-  const string months("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec");
-  string month, day, year;
-  stringstream ss, date(__DATE__); // From compiler, format is "Sep 21 2008"
+  stringstream ss;
 
-  ss << "Stockfish " << Version << setfill('0');
+  const std::string months("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec");
+  std::string month, day, year;
+  std::stringstream date(__DATE__); // From compiler, format is "Sep 21 2008"
+
+  ss << "S_XPrO " << Version << setfill('0');
+
 
   if (Version.empty())
   {
@@ -130,12 +135,191 @@ const string engine_info(bool to_uci) {
       ss << setw(2) << day << setw(2) << (1 + months.find(month) / 4) << year.substr(2);
   }
 
-  ss << (Is64Bit ? " 64" : "")
+
+  ss << (Is64Bit ? " x64" : " x32")
      << (HasPext ? " BMI2" : (HasPopCnt ? " POPCNT" : ""))
      << (to_uci  ? "\nid author ": " by ")
-     << "T. Romstad, M. Costalba, J. Kiiski, G. Linscott";
+     << "Marco Zerbinati, Sergey Aleksandrovitch Kozlov";
+ 
+	 return ss.str();
+}
 
-  return ss.str();
+const std::string system_info()
+{
+	std::stringstream result;
+
+#ifdef _WIN32
+	{
+		InitVersion();
+
+		if (IsWindowsXPOrGreater())
+		{
+			if (IsWindowsXPSP1OrGreater())
+			{
+				if (IsWindowsXPSP2OrGreater())
+				{
+					if (IsWindowsXPSP3OrGreater())
+					{
+						if (IsWindowsVistaOrGreater())
+						{
+							if (IsWindowsVistaSP1OrGreater())
+							{
+								if (IsWindowsVistaSP2OrGreater())
+								{
+									if (IsWindows7OrGreater())
+									{
+										if (IsWindows7SP1OrGreater())
+										{
+											if (IsWindows8OrGreater())
+											{
+												if (IsWindows8Point1OrGreater())
+												{
+													if (IsWindows10OrGreater())
+													{
+														result << std::string("Windows 10");
+													}
+													else
+													{
+														result << std::string("Windows 8.1");
+													}
+												}
+												else
+												{
+													result << std::string("Windows 8");
+												}
+											}
+											else
+											{
+												result << std::string("Windows 7 SP1");
+											}
+										}
+										else
+										{
+											result << std::string("Windows 7");
+										}
+									}
+									else
+									{
+										result << std::string("Vista SP2");
+									}
+								}
+								else
+								{
+									result << std::string("Vista SP1");
+								}
+							}
+							else
+							{
+								result << std::string("Vista");
+							}
+						}
+						else
+						{
+							result << std::string("XP SP3");
+						}
+					}
+					else
+					{
+						result << std::string("XP SP2");
+					}
+				}
+				else
+				{
+					result << std::string("XP SP1");
+				}
+			}
+			else
+			{
+				result << std::string("XP");
+			}
+		}
+
+		if (IsWindowsServer())
+		{
+			result << std::string(" Server ");
+		}
+		else
+		{
+			result << std::string(" Client ");
+		}
+
+		result << std::string("Or Greater") << std::endl;
+
+		result << std::endl;
+	}
+#endif
+
+	return result.str();
+}
+
+const std::string hardware_info()
+{
+	std::stringstream result;
+
+#ifdef _WIN32
+	{
+		SYSTEM_INFO siSysInfo;
+
+		// Copy the hardware information to the SYSTEM_INFO structure. 
+
+		GetSystemInfo(&siSysInfo);
+
+		// Display the contents of the SYSTEM_INFO structure. 
+
+		result << std::endl;
+
+		result << "Hardware information : " << std::endl;
+		result << "  CPU Architecture   : " << siSysInfo.wProcessorArchitecture << std::endl;
+		result << "  CPU Core           : " << siSysInfo.dwNumberOfProcessors << std::endl;
+		result << "  Processor type     : " << siSysInfo.dwProcessorType << std::endl;
+
+		// Use to convert bytes to MB
+		const size_t local_1000_000 = 1000 * 1000;
+
+		MEMORYSTATUSEX statex;
+
+		statex.dwLength = sizeof(statex);
+
+		GlobalMemoryStatusEx(&statex);
+
+		result << "  Total RAM          : " << statex.ullTotalPhys / local_1000_000 << "MB" << std::endl;
+
+		result << std::endl;
+	}
+#endif 
+
+	return result.str();
+}
+
+const std::string cores_info()
+{
+	std::stringstream result;
+
+#ifdef _WIN32
+	{
+		SYSTEM_INFO siSysInfo;
+
+		// Copy the hardware information to the SYSTEM_INFO structure. 
+
+		GetSystemInfo(&siSysInfo);
+
+		result << std::endl;
+
+		DWORD n = DWORD(std::thread::hardware_concurrency());
+		result << "Test running " << n << " Cores\n";
+
+		DWORD local_mask = siSysInfo.dwActiveProcessorMask;
+
+		for (DWORD core_counter = 0; core_counter<n; core_counter++)
+		{
+			result << "Core " << core_counter << (((core_counter + 1) & local_mask) ? " ready\n" : " not ready\n");
+		}
+
+		result << std::endl;
+	}
+#endif 
+
+	return result.str();
 }
 
 
