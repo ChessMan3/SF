@@ -833,7 +833,7 @@ namespace {
     score += pe->pawns_score();
 
     // Early exit if score is high
-    Value v = (mg_value(score) + eg_value(score)) / 2;
+    Value v = (mg_value(score + Eval::Contempt[WHITE]) + eg_value(score)) / 2;
     if (abs(v) > LazyThreshold)
        return pos.side_to_move() == WHITE ? v : -v;
 
@@ -863,6 +863,8 @@ namespace {
                 - evaluate_space<BLACK>();
 
     score += evaluate_initiative(eg_value(score));
+
+    score += Eval::Contempt[WHITE];
 
     // Interpolate between a middlegame and a (scaled by 'sf') endgame score
     ScaleFactor sf = evaluate_scale_factor(eg_value(score));
@@ -933,4 +935,11 @@ std::string Eval::trace(const Position& pos) {
   ss << "\nTotal Evaluation: " << to_cp(v) << " (white side)\n";
 
   return ss.str();
+}
+
+Score Eval::Contempt[COLOR_NB];
+
+Value Eval::score_to_value(Score s, const Position& pos) {
+   Phase phase = Material::probe(pos)->game_phase();
+   return (mg_value(s) * phase + eg_value(s) * (PHASE_MIDGAME - phase)) / PHASE_MIDGAME;
 }
