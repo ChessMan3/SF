@@ -109,32 +109,6 @@ namespace {
   void update_capture_stats(const Position& pos, Move move, Move* captures, int captureCnt, int bonus);
   bool pv_is_draw(Position& pos);
 
-  // perft() is our utility to verify move generation. All the leaf nodes up
-  // to the given depth are generated and counted, and the sum is returned.
-  template<bool Root>
-  uint64_t perft(Position& pos, Depth depth) {
-
-    StateInfo st;
-    uint64_t cnt, nodes = 0;
-    const bool leaf = (depth == 2 * ONE_PLY);
-
-    for (const auto& m : MoveList<LEGAL>(pos))
-    {
-        if (Root && depth <= ONE_PLY)
-            cnt = 1, nodes++;
-        else
-        {
-            pos.do_move(m, st);
-            cnt = leaf ? MoveList<LEGAL>(pos).size() : perft<false>(pos, depth - ONE_PLY);
-            nodes += cnt;
-            pos.undo_move(m);
-        }
-        if (Root)
-            sync_cout << UCI::move(m, pos.is_chess960()) << ": " << cnt << sync_endl;
-    }
-    return nodes;
-  }
-
 } // namespace
 
 
@@ -176,17 +150,40 @@ void Search::clear() {
 }
 
 
+
+/// Search::perft() is our utility to verify move generation. All the leaf nodes
+/// up to the given depth are generated and counted, and the sum is returned.
+template<bool Root>
+uint64_t Search::perft(Position& pos, Depth depth) {
+
+  StateInfo st;
+  uint64_t cnt, nodes = 0;
+  const bool leaf = (depth == 2 * ONE_PLY);
+
+  for (const auto& m : MoveList<LEGAL>(pos))
+  {
+      if (Root && depth <= ONE_PLY)
+          cnt = 1, nodes++;
+      else
+      {
+          pos.do_move(m, st);
+          cnt = leaf ? MoveList<LEGAL>(pos).size() : perft<false>(pos, depth - ONE_PLY);
+          nodes += cnt;
+          pos.undo_move(m);
+      }
+      if (Root)
+          sync_cout << UCI::move(m, pos.is_chess960()) << ": " << cnt << sync_endl;
+  }
+  return nodes;
+}
+
+template uint64_t Search::perft<true>(Position&, Depth);
+
+
 /// MainThread::search() is called by the main thread when the program receives
 /// the UCI 'go' command. It searches from the root position and outputs the "bestmove".
 
 void MainThread::search() {
-
-  if (Limits.perft)
-  {
-      nodes = perft<true>(rootPos, Limits.perft * ONE_PLY);
-      sync_cout << "\nNodes searched: " << nodes << "\n" << sync_endl;
-      return;
-  }
 
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
