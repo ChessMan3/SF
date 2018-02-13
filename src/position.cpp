@@ -2,7 +2,7 @@
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -211,10 +211,10 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Th
   while ((ss >> token) && !isspace(token))
   {
       if (isdigit(token))
-          sq += (token - '0') * EAST; // Advance the given number of files
+          sq += Square(token - '0'); // Advance the given number of files
 
       else if (token == '/')
-          sq += 2 * SOUTH;
+          sq -= Square(16);
 
       else if ((idx = PieceToChar.find(token)) != string::npos)
       {
@@ -272,7 +272,7 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Th
   // 5-6. Halfmove clock and fullmove number
   ss >> std::skipws >> st->rule50 >> gamePly;
 
-  // Convert from fullmove starting from 1 to gamePly starting from 0,
+  // Convert from fullmove starting from 1 to ply starting from 0,
   // handle also common incorrect FEN with fullmove = 0.
   gamePly = std::max(2 * (gamePly - 1), 0) + (sideToMove == BLACK);
 
@@ -447,6 +447,19 @@ const string Position::fen() const {
      << st->rule50 << " " << 1 + (gamePly - (sideToMove == BLACK)) / 2;
 
   return ss.str();
+}
+
+
+/// Position::game_phase() calculates the game phase interpolating total non-pawn
+/// material between endgame and midgame limits.
+
+Phase Position::game_phase() const {
+
+  Value npm = st->nonPawnMaterial[WHITE] + st->nonPawnMaterial[BLACK];
+
+  npm = std::max(EndgameLimit, std::min(npm, MidgameLimit));
+
+  return Phase(((npm - EndgameLimit) * PHASE_MIDGAME) / (MidgameLimit - EndgameLimit));
 }
 
 
@@ -787,7 +800,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       if (   (int(to) ^ int(from)) == 16
           && (attacks_from<PAWN>(to - pawn_push(us), us) & pieces(them, PAWN)))
       {
-          st->epSquare = to - pawn_push(us);
+          st->epSquare = (from + to) / 2;
           k ^= Zobrist::enpassant[file_of(st->epSquare)];
       }
 
@@ -993,8 +1006,10 @@ bool Position::see_ge(Move m, Value threshold) const {
 
   assert(is_ok(m));
 
-  // Only deal with normal moves, assume others pass a simple see
-  if (type_of(m) != NORMAL)
+  // Castling moves are implemented as king capturing the rook so cannot be
+  // handled correctly. Simply assume the SEE value is VALUE_ZERO that is always
+  // correct unless in the rare case the rook ends up under attack.
+  if (type_of(m) == CASTLING)
       return VALUE_ZERO >= threshold;
 
   Square from = from_sq(m), to = to_sq(m);
@@ -1003,22 +1018,30 @@ bool Position::see_ge(Move m, Value threshold) const {
   Value balance; // Values of the pieces taken by us minus opponent's ones
   Bitboard occupied, stmAttackers;
 
-  // The opponent may be able to recapture so this is the best result
-  // we can hope for.
-  balance = PieceValue[MG][piece_on(to)] - threshold;
+  if (type_of(m) == ENPASSANT)
+  {
+      occupied = SquareBB[to - pawn_push(~stm)]; // Remove the captured pawn
+      balance = PieceValue[MG][PAWN];
+  }
+  else
+  {
+      balance = PieceValue[MG][piece_on(to)];
+      occupied = 0;
+  }
 
-  if (balance < VALUE_ZERO)
+  if (balance < threshold)
       return false;
 
-  // Now assume the worst possible result: that the opponent can
-  // capture our piece for free.
-  balance -= PieceValue[MG][nextVictim];
-
-  if (balance >= VALUE_ZERO) // Always true if nextVictim == KING
+  if (nextVictim == KING)
       return true;
 
-  bool opponentToMove = true;
-  occupied = pieces() ^ from ^ to;
+  balance -= PieceValue[MG][nextVictim];
+
+  if (balance >= threshold)
+      return true;
+
+  bool relativeStm = true; // True if the opponent is to move
+  occupied ^= pieces() ^ from ^ to;
 
   // Find all attackers to the destination square, with the moving piece removed,
   // but possibly an X-ray attacker added behind it.
@@ -1026,12 +1049,6 @@ bool Position::see_ge(Move m, Value threshold) const {
 
   while (true)
   {
-      // The balance is negative only because we assumed we could win
-      // the last piece for free. We are truly winning only if we can
-      // win the last piece _cheaply enough_. Test if we can actually
-      // do this otherwise "give up".
-      assert(balance < VALUE_ZERO);
-
       stmAttackers = attackers & pieces(stm);
 
       // Don't allow pinned pieces to attack pieces except the king as long all
@@ -1039,40 +1056,25 @@ bool Position::see_ge(Move m, Value threshold) const {
       if (!(st->pinnersForKing[stm] & ~occupied))
           stmAttackers &= ~st->blockersForKing[stm];
 
-      // If we have no more attackers we must give up
       if (!stmAttackers)
-          break;
+          return relativeStm;
 
       // Locate and remove the next least valuable attacker
       nextVictim = min_attacker<PAWN>(byTypeBB, to, stmAttackers, occupied, attackers);
 
       if (nextVictim == KING)
-      {
-          // Our only attacker is the king. If the opponent still has
-          // attackers we must give up. Otherwise we make the move and
-          // (having no more attackers) the opponent must give up.
-          if (!(attackers & pieces(~stm)))
-              opponentToMove = !opponentToMove;
-          break;
-      }
+          return relativeStm == bool(attackers & pieces(~stm));
 
-      // Assume the opponent can win the next piece for free and switch sides
-      balance += PieceValue[MG][nextVictim];
-      opponentToMove = !opponentToMove;
+      balance += relativeStm ?  PieceValue[MG][nextVictim]
+                             : -PieceValue[MG][nextVictim];
 
-      // If balance is negative after receiving a free piece then give up
-      if (balance < VALUE_ZERO)
-          break;
+      relativeStm = !relativeStm;
 
-      // Complete the process of switching sides. The first line swaps
-      // all negative numbers with non-negative numbers. The compiler
-      // probably knows that it is just the bitwise negation ~balance.
-      balance = -balance-1;
+      if (relativeStm == (balance >= threshold))
+          return relativeStm;
+
       stm = ~stm;
   }
-
-  // If the opponent gave up we win, otherwise we lose.
-  return opponentToMove;
 }
 
 
@@ -1096,10 +1098,11 @@ bool Position::is_draw(int ply) const {
   {
       stp = stp->previous->previous;
 
-      // Return a draw score if a position repeats once earlier but strictly
-      // after the root, or repeats twice before or at the root.
+      // At root position ply is 1, so return a draw score if a position
+      // repeats once earlier but strictly after the root, or repeats twice
+      // before or at the root.
       if (   stp->key == st->key
-          && ++cnt + (ply > i) == 2)
+          && ++cnt + (ply - 1 > i) == 2)
           return true;
   }
 

@@ -1,7 +1,7 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (c) 2013 Ronald de Man
-  Copyright (C) 2016-2018 Marco Costalba, Lucas Braesch
+  Copyright (C) 2016-2017 Marco Costalba, Lucas Braesch
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -133,16 +133,16 @@ struct Atomic {
     std::atomic_bool ready;
 };
 
-// We define types for the different parts of the WDLEntry and DTZEntry with
+// We define types for the different parts of the WLDEntry and DTZEntry with
 // corresponding specializations for pieces or pawns.
 
-struct WDLEntryPiece {
+struct WLDEntryPiece {
     PairsData* precomp;
 };
 
 struct WDLEntryPawn {
     uint8_t pawnCount[2];     // [Lead color / other color]
-    WDLEntryPiece file[2][4]; // [wtm / btm][FILE_A..FILE_D]
+    WLDEntryPiece file[2][4]; // [wtm / btm][FILE_A..FILE_D]
 };
 
 struct DTZEntryPiece {
@@ -172,7 +172,7 @@ struct WDLEntry : public TBEntry {
     WDLEntry(const std::string& code);
    ~WDLEntry();
     union {
-        WDLEntryPiece pieceTable[2]; // [wtm / btm]
+        WLDEntryPiece pieceTable[2]; // [wtm / btm]
         WDLEntryPawn  pawnTable;
     };
 };
@@ -341,10 +341,6 @@ public:
 #ifndef _WIN32
         struct stat statbuf;
         int fd = ::open(fname.c_str(), O_RDONLY);
-
-        if (fd == -1)
-            return *baseAddress = nullptr, nullptr;
-
         fstat(fd, &statbuf);
         *mapping = statbuf.st_size;
         *baseAddress = mmap(nullptr, statbuf.st_size, PROT_READ, MAP_SHARED, fd, 0);
@@ -357,10 +353,6 @@ public:
 #else
         HANDLE fd = CreateFile(fname.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
-        if (fd == INVALID_HANDLE_VALUE)
-            return *baseAddress = nullptr, nullptr;
-
         DWORD size_high;
         DWORD size_low = GetFileSize(fd, &size_high);
         HANDLE mmap = CreateFileMapping(fd, nullptr, PAGE_READONLY, size_high, size_low, nullptr);
@@ -388,7 +380,8 @@ public:
             || *data++ != *TB_MAGIC) {
             std::cerr << "Corrupted table in file " << fname << std::endl;
             unmap(*baseAddress, *mapping);
-            return *baseAddress = nullptr, nullptr;
+            *baseAddress = nullptr;
+            return nullptr;
         }
 
         return data;
@@ -489,15 +482,15 @@ void HashTable::insert(const std::vector<PieceType>& pieces) {
 
     TBFile file(code.insert(code.find('K', 1), "v") + ".rtbw"); // KRK -> KRvK
 
-    if (!file.is_open()) // Only WDL file is checked
+    if (!file.is_open())
         return;
 
     file.close();
 
     MaxCardinality = std::max((int)pieces.size(), MaxCardinality);
 
-    wdlTable.emplace_back(code);
-    dtzTable.emplace_back(wdlTable.back());
+    wdlTable.push_back(WDLEntry(code));
+    dtzTable.push_back(DTZEntry(wdlTable.back()));
 
     insert(wdlTable.back().key , &wdlTable.back(), &dtzTable.back());
     insert(wdlTable.back().key2, &wdlTable.back(), &dtzTable.back());
