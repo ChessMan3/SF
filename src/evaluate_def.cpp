@@ -309,28 +309,18 @@ namespace {
         attackedBy2[Us] |= attackedBy[Us][ALL_PIECES] & b;
         attackedBy[Us][ALL_PIECES] |= attackedBy[Us][Pt] |= b;
 
-        int count = 0;
-		if (b & kingRing[Them])
+        if (b & kingRing[Them])
         {
             kingAttackersCount[Us]++;
             kingAttackersWeight[Us] += KingAttackWeights[Pt];
-			count = popcount(b & attackedBy[Them][KING]);
-            kingAdjacentZoneAttacksCount[Us] += count;
+            kingAdjacentZoneAttacksCount[Us] += popcount(b & attackedBy[Them][KING]);
         }
 
-        bb = b & mobilityArea[Us];
-		int mob = popcount(bb);
+        int mob = popcount(b & mobilityArea[Us]);
 
         mobility[Us] += MobilityBonus[Pt - 2][mob];
 
-        if (mob == 0 || !(bb & ~attackedBy[Them][ALL_PIECES]))
-		{
-			if ( mob > 0 || s & attackedBy[Them][ALL_PIECES])
-				score -= Hanging;
-			if (count == 0 && mob == 0)
-				score -= Hanging; 
-		}
-		// Bonus for this piece as a king protector
+        // Bonus for this piece as a king protector
         score += KingProtector[Pt - 2] * distance(s, pos.square<KING>(Us));
 
         if (Pt == BISHOP || Pt == KNIGHT)

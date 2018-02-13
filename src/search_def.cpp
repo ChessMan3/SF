@@ -547,9 +547,9 @@ namespace {
     TTEntry* tte;
     Key posKey;
     Move ttMove, move, excludedMove, bestMove;
-    Depth extension, newDepth, Sreduction;
-    Value bestValue, value, ttValue, eval, delta;
-    bool ttHit, inCheck, givesCheck, singularExtensionNode, improving, SreductionNode;
+    Depth extension, newDepth;
+    Value bestValue, value, ttValue, eval;
+    bool ttHit, inCheck, givesCheck, singularExtensionNode, improving;
     bool captureOrPromotion, doFullDepthSearch, moveCountPruning, skipQuiets, ttCapture;
     Piece moved_piece;
     int moveCount, quietCount;
@@ -669,21 +669,6 @@ namespace {
         }
     }
 
-    singularExtensionNode =   !rootNode
-                           &&  depth >= 8 * ONE_PLY
-                           &&  ttMove != MOVE_NONE
-                           &&  ttValue != VALUE_NONE
-                           && !excludedMove // Recursive singular search is not allowed
-                           && (tte->bound() & BOUND_LOWER)
-                           &&  tte->depth() >= depth - 3 * ONE_PLY;
-	
-    SreductionNode =          !rootNode
-                           &&  depth >= 8 * ONE_PLY
-                           &&  ttMove != MOVE_NONE
-                           &&  ttValue != VALUE_NONE
-                           && !excludedMove // Recursive singular search is not allowed
-                           && (tte->bound() == BOUND_UPPER)
-                           &&  tte->depth() >= depth - 3 * ONE_PLY;
     // Step 5. Evaluate the position statically
     if (inCheck)
     {
@@ -763,9 +748,7 @@ namespace {
             if (nullValue >= VALUE_MATE_IN_MAX_PLY)
                 nullValue = beta;
 
-            if (    depth < 12 * ONE_PLY
-    			&&  abs(beta) < VALUE_KNOWN_WIN
-				&& !singularExtensionNode)
+            if (depth < 12 * ONE_PLY && abs(beta) < VALUE_KNOWN_WIN)
                 return nullValue;
 
             // Do verification search at high depths
@@ -782,7 +765,6 @@ namespace {
     // much above beta, we can (almost) safely prune the previous move.
     if (   !PvNode
         &&  depth >= 5 * ONE_PLY
-		&& !singularExtensionNode
         &&  abs(beta) < VALUE_MATE_IN_MAX_PLY)
     {
         Value rbeta = std::min(beta + 200, VALUE_INFINITE);
@@ -807,13 +789,12 @@ namespace {
     }
 
     // Step 10. Internal iterative deepening (skipped when in check)
-    if (    depth >= (PvNode ? 5 * ONE_PLY : 8 * ONE_PLY)
-		&& !excludedMove
-        && (!ttMove || (tte && (tte->bound() == BOUND_LOWER) && (cutNode || PvNode)))
+    if (    depth >= 6 * ONE_PLY
+        && !ttMove
         && (PvNode || ss->staticEval + 256 >= beta))
     {
-        Depth d = depth - 2 * ONE_PLY - depth / 4;
-        search<NT>(pos, ss, alpha, beta, d, false, true);
+        Depth d = (3 * depth / (4 * ONE_PLY) - 2) * ONE_PLY;
+        search<NT>(pos, ss, alpha, beta, d, cutNode, true);
 
         tte = TT.probe(posKey, ttHit);
         ttMove = ttHit ? tte->move() : MOVE_NONE;
@@ -831,8 +812,13 @@ moves_loop: // When in check search starts from here
             /* || ss->staticEval == VALUE_NONE Already implicit in the previous condition */
                ||(ss-2)->staticEval == VALUE_NONE;
 
-    Sreduction = DEPTH_ZERO;
-	delta = ss->staticEval - (ss-2)->staticEval;
+    singularExtensionNode =   !rootNode
+                           &&  depth >= 8 * ONE_PLY
+                           &&  ttMove != MOVE_NONE
+                           &&  ttValue != VALUE_NONE
+                           && !excludedMove // Recursive singular search is not allowed
+                           && (tte->bound() & BOUND_LOWER)
+                           &&  tte->depth() >= depth - 3 * ONE_PLY;
     skipQuiets = false;
     ttCapture = false;
 
@@ -871,8 +857,7 @@ moves_loop: // When in check search starts from here
                   : pos.gives_check(move);
 
       moveCountPruning =   depth < 16 * ONE_PLY
-                        && moveCount >= FutilityMoveCounts[improving][depth / ONE_PLY]
-						&& abs(eval) < VALUE_KNOWN_WIN;
+                        && moveCount >= FutilityMoveCounts[improving][depth / ONE_PLY];
 
       // Step 12. Singular and Gives Check Extensions
 
@@ -899,24 +884,8 @@ moves_loop: // When in check search starts from here
                &&  pos.see_ge(move))
           extension = ONE_PLY;
 
-      if (    SreductionNode
-	      &&  move == ttMove
-		  &&  pos.legal(move))
-	  {
-		  Value rBeta = std::max(alpha + 1 - PawnValueMg/2, -VALUE_MATE);
-          Depth d = (depth / (2 * ONE_PLY)) * ONE_PLY;
-          ss->excludedMove = move;
-          value = search<NonPV>(pos, ss, rBeta - 1, rBeta, d, cutNode, true);
-          ss->excludedMove = MOVE_NONE;
-
-          if (value < rBeta)
-              Sreduction = ONE_PLY + depth/4;
-	  }
-	  
-	  // Calculate new depth for this move
+      // Calculate new depth for this move
       newDepth = depth - ONE_PLY + extension;
-	  if (Sreduction && move != ttMove)
-		  newDepth -= Sreduction;
 
       // Step 13. Pruning at shallow depth
       if (  !rootNode
@@ -944,11 +913,9 @@ moves_loop: // When in check search starts from here
                   continue;
 
               // Futility pruning: parent node
-              if (   lmrDepth <= 6
+              if (   lmrDepth < 7
                   && !inCheck
-				  && ss->staticEval != VALUE_NONE
-				  && (ss-2)->staticEval != VALUE_NONE
-                  && ss->staticEval + 128 - moveCount - int(ss->ply) + ((PvNode ? 256 : 128) + delta) * lmrDepth <= alpha)
+                  && ss->staticEval + 256 + 200 * lmrDepth <= alpha)
                   continue;
 
               // Prune moves with negative SEE
@@ -1045,14 +1012,7 @@ moves_loop: // When in check search starts from here
       // For PV nodes only, do a full PV search on the first move or after a fail
       // high (in the latter case search only if value < beta), otherwise let the
       // parent node fail low with value <= alpha and try another move.
-      if (PvNode && (moveCount == 1 || value > beta) && newDepth > 20 * ONE_PLY)
-	  {
-		  value = - search<NonPV>(pos, ss+1, -beta, -beta+1, newDepth + 4 * ONE_PLY, true, true);
-		  if (value >= beta || value <= alpha)
-			  value = - search<NonPV>(pos, ss+1, -beta, -beta+1, newDepth + 8 * ONE_PLY, true, true);
-	  }
-	  if (    PvNode
-    	  && (moveCount == 1 || (value > alpha && (rootNode || value < beta))))
+      if (PvNode && (moveCount == 1 || (value > alpha && (rootNode || value < beta))))
       {
           (ss+1)->pv = pv;
           (ss+1)->pv[0] = MOVE_NONE;
