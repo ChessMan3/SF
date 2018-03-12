@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  SugaR, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  SugaR is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  SugaR is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -21,6 +21,10 @@
 #include <algorithm>
 #include <cassert>
 #include <ostream>
+//Hash		
+#include <iostream>
+//end_Hash
+#include <thread>
 
 #include "misc.h"
 #include "search.h"
@@ -28,6 +32,7 @@
 #include "tt.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
+#include "polybook.h"
 
 using std::string;
 
@@ -41,7 +46,16 @@ void on_hash_size(const Option& o) { TT.resize(o); }
 void on_logger(const Option& o) { start_logger(o); }
 void on_threads(const Option& o) { Threads.set(o); }
 void on_tb_path(const Option& o) { Tablebases::init(o); }
+//Hash	
+void on_HashFile(const Option& o) { TT.set_hash_file_name(o); }
+void SaveHashtoFile(const Option&) { TT.save(); }
+void LoadHashfromFile(const Option&) { TT.load(); }
+void LoadEpdToHash(const Option&) { TT.load_epd_to_hash(); }
+//end_Hash
 
+void on_book_file(const Option& o) { polybook.init(o); }
+void on_best_book_move(const Option& o) { polybook.set_best_book_move(o); }
+void on_book_depth(const Option& o) { polybook.set_book_depth(o); }
 
 /// Our case insensitive less() function as required by UCI protocol
 bool CaseInsensitiveLess::operator() (const string& s1, const string& s2) const {
@@ -58,10 +72,13 @@ void init(OptionsMap& o) {
   // at most 2^32 clusters.
   const int MaxHashMB = Is64Bit ? 131072 : 2048;
 
+  unsigned int n = std::thread::hardware_concurrency();
+  if (!n) n = 1;
+  
   o["Debug Log File"]        << Option("", on_logger);
   o["Contempt"]              << Option(12, -100, 100);
-  o["Threads"]               << Option(1, 1, 512, on_threads);
-  o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
+  o["Threads"]               << Option(n, 1, 512, on_threads);
+  o["Hash"]                  << Option(128, 1, MaxHashMB, on_hash_size);
   o["Clear Hash"]            << Option(on_clear_hash);
   o["Ponder"]                << Option(false);
   o["MultiPV"]               << Option(1, 1, 500);
@@ -70,11 +87,28 @@ void init(OptionsMap& o) {
   o["Minimum Thinking Time"] << Option(20, 0, 5000);
   o["Slow Mover"]            << Option(84, 10, 1000);
   o["nodestime"]             << Option(0, 0, 10000);
+  o["NeverClearHash"]           << Option(false);
+  o["HashFile"]                 << Option("SugaR_hash.hsh", on_HashFile);
+  o["SaveHashtoFile"]           << Option(SaveHashtoFile);
+  o["LoadHashfromFile"]         << Option(LoadHashfromFile);
+  o["LoadEpdToHash"]            << Option(LoadEpdToHash);
   o["UCI_Chess960"]          << Option(false);
+  o["UCI_AnalyseMode"]       << Option(false);
   o["SyzygyPath"]            << Option("<empty>", on_tb_path);
   o["SyzygyProbeDepth"]      << Option(1, 1, 100);
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(6, 0, 6);
+  o["Correspondence Chess Analyzer"]     << Option();
+  o["Analysis Mode"]            << Option(0, 0,  8);
+  o["NullMove"]                 << Option(true);
+  o["Polyglot Book management"] << Option();
+  o["OwnBook"]                  << Option(false);
+  o["Best Book Move"]           << Option(false);
+  o["Book File"]                << Option("book.bin");
+  o["Cerebellum Book Library"]  << Option();
+  o["BookFile"]              << Option("Cerebellum_Light_Poly.bin", on_book_file);
+  o["BestBookMove"]          << Option(true, on_best_book_move);
+  o["BookDepth"]             << Option(255, 1, 255, on_book_depth);   
 }
 
 

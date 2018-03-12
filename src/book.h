@@ -18,25 +18,35 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef EVALUATE_H_INCLUDED
-#define EVALUATE_H_INCLUDED
+/*
+  The code in this file is based on the opening book code in PolyGlot
+  by Fabien Letouzey. PolyGlot is available under the GNU General
+  Public License, and can be downloaded from http://wbec-ridderkerk.nl
+ */
 
-#include <atomic>
+#ifndef BOOK_H_INCLUDED
+#define BOOK_H_INCLUDED
+
+#include <fstream>
 #include <string>
 
-#include "types.h"
+#include "misc.h"
+#include "position.h"
 
-class Position;
+class PolyglotBook : private std::ifstream {
+public:
+  PolyglotBook();
+ ~PolyglotBook();
+  Move probe(const Position& pos, const std::string& fName, bool pickBest);
 
-namespace Eval {
+private:
+  template<typename T> PolyglotBook& operator>>(T& n);
 
-const Value Tempo = Value(20); // Must be visible to search
+  bool open(const char* fName);
+  size_t find_first(Key key);
 
-extern std::atomic<Score> Contempt;
+  PRNG rng;
+  std::string fileName;
+};
 
-std::string trace(const Position& pos);
-
-Value evaluate(const Position& pos);
-}
-
-#endif // #ifndef EVALUATE_H_INCLUDED
+#endif // #ifndef BOOK_H_INCLUDED

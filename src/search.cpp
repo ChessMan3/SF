@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  SugaR, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  SugaR is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  SugaR is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -22,14 +22,17 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>   // For std::memset
+//#include <unistd.h> //for sleep
 #include <iostream>
 #include <sstream>
 
+#include "book.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
 #include "position.h"
+#include "polybook.h"
 #include "search.h"
 #include "timeman.h"
 #include "thread.h"
@@ -97,7 +100,9 @@ namespace {
     int level;
     Move best = MOVE_NONE;
   };
-
+  
+  int tactical;
+  bool doNull;				
   template <NodeType NT>
   Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, bool cutNode, bool skipEarlyPruning);
 
@@ -176,6 +181,10 @@ void Search::init() {
 /// Search::clear() resets search state to its initial value
 
 void Search::clear() {
+//Hash
+  if (Options["NeverClearHash"])
+	return;
+//end_Hash
 
   Threads.main()->wait_for_search_finished();
 
@@ -197,10 +206,21 @@ void MainThread::search() {
       return;
   }
 
+  static PolyglotBook book; // Defined static to initialize the PRNG only once
+
   Color us = rootPos.side_to_move();
   Time.init(Limits, us, rootPos.game_ply());
+//Hash			  
+  if (!Limits.infinite)
   TT.new_search();
+  else
+  TT.infinite_search();
+//end_hash
 
+  // Read search options
+  doNull   = Options["NullMove"];
+  tactical =  Options["Analysis Mode"];
+ 
   if (rootMoves.empty())
   {
       rootMoves.emplace_back(MOVE_NONE);
@@ -210,13 +230,38 @@ void MainThread::search() {
   }
   else
   {
-      for (Thread* th : Threads)
-          if (th != this)
-              th->start_searching();
+      if (Options["OwnBook"] && !Limits.infinite && !Limits.mate)
+      {
+          Move bookMove = book.probe(rootPos, Options["Book File"], Options["Best Book Line"]);
 
-      Thread::search(); // Let's start searching!
+          if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+          {
+              std::swap(rootMoves[0], *std::find(rootMoves.begin(), rootMoves.end(), bookMove));
+              goto finalize;
+          }
+      }
+      Move bookMove = MOVE_NONE;
+
+      if (!Limits.infinite && !Limits.mate)
+          bookMove = polybook.probe(rootPos);
+
+      if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
+      {
+          for (Thread* th : Threads)
+              std::swap(th->rootMoves[0], *std::find(th->rootMoves.begin(), th->rootMoves.end(), bookMove));
+      }
+      else
+      {
+          for (Thread* th : Threads)
+              if (th != this)
+                  th->start_searching();
+
+
+          Thread::search(); // Let's start searching!
+      }
   }
 
+finalize:
   // When we reach the maximum depth, we can arrive here without a raise of
   // Threads.stop. However, if we are pondering or in an infinite search,
   // the UCI protocol states that we shouldn't print the best move before the
@@ -301,7 +346,8 @@ void Thread::search() {
 
   size_t multiPV = Options["MultiPV"];
   Skill skill(Options["Skill Level"]);
-
+  if (tactical) multiPV = size_t(pow(2, tactical));
+  
   // When playing with strength handicap enable MultiPV search that we will
   // use behind the scenes to retrieve a set of possible moves.
   if (skill.enabled())
@@ -710,7 +756,8 @@ namespace {
         return eval;
 
     // Step 9. Null move search with verification search
-    if (   !PvNode
+    if (    doNull
+        && !PvNode
         &&  eval >= beta
         &&  ss->staticEval >= beta - 36 * depth / ONE_PLY + 225
         && (ss->ply >= thisThread->nmp_ply || ss->ply % 2 != thisThread->nmp_odd))
@@ -775,18 +822,15 @@ namespace {
                 ss->contHistory = thisThread->contHistory[pos.moved_piece(move)][to_sq(move)].get();
 
                 assert(depth >= 5 * ONE_PLY);
-
+                
                 pos.do_move(move, st);
 
-                // Perform a preliminary search at depth 1 to verify that the move holds.
-                // We will only do this search if the depth is not 5, thus avoiding two
-                // searches at depth 1 in a row.
-                if (depth != 5 * ONE_PLY)
-                    value = -search<NonPV>(pos, ss+1, -rbeta, -rbeta+1, ONE_PLY, !cutNode, true);
+                // Perform a preliminary qsearch to verify that the move holds
+                value = pos.checkers() ? -qsearch<NonPV, true>(pos, ss + 1, -rbeta, -rbeta + 1)
+                    : -qsearch<NonPV, false>(pos, ss + 1, -rbeta, -rbeta + 1);
 
-                // If the first search was skipped or was performed and held, perform
-                // the regular search.
-                if (depth == 5 * ONE_PLY || value >= rbeta)
+                // If the qsearch was held, perform the regular search
+                if (value >= rbeta)
                     value = -search<NonPV>(pos, ss+1, -rbeta, -rbeta+1, depth - 4 * ONE_PLY, !cutNode, false);
 
                 pos.undo_move(move);
@@ -816,6 +860,9 @@ moves_loop: // When in check, search starts from here
 
     MovePicker mp(pos, ttMove, depth, &thisThread->mainHistory, &thisThread->captureHistory, contHist, countermove, ss->killers);
     value = bestValue; // Workaround a bogus 'uninitialized' warning under gcc
+
+	bool greatlyImproving = (ss - 0)->staticEval > (ss - 2)->staticEval + 16
+		 && (ss - 2)->staticEval > (ss - 4)->staticEval + 16;
 
     singularExtensionNode =   !rootNode
                            &&  depth >= 8 * ONE_PLY
@@ -1004,7 +1051,11 @@ moves_loop: // When in check, search starts from here
 
           Depth d = std::max(newDepth - r, ONE_PLY);
 
-          value = -search<NonPV>(pos, ss+1, -(alpha+1), -alpha, d, true, false);
+		  bool foo = PvNode && !moveCountPruning && greatlyImproving && ss->staticEval > alpha;
+		  // && "iteration depth" >= 10 * ONE_PLY;
+		  // or && "iteration depth" >= 4 * ONE_PLY
+
+          value = -search<NonPV>(pos, ss+1, -(alpha+1), -alpha, d, true, foo);
 
           doFullDepthSearch = (value > alpha && d != newDepth);
       }
