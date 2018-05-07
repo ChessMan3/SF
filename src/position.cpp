@@ -1,22 +1,23 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
-
-  Stockfish is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Stockfish is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ McBrain, a UCI chess playing engine derived from Stockfish and Glaurung 2.1
+ Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+ Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2017-2018 Michael Byrne, Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (McBrain Authors)
+ 
+ McBrain is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ McBrain is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include <algorithm>
 #include <cassert>
@@ -130,6 +131,13 @@ std::ostream& operator<<(std::ostream& os, const Position& pos) {
 }
 
 
+// Marcel Kervinck's algorithm for Deep Blue’s "upcoming repetition" / "no progress" detectors
+Key cuckoo[0x2000];             // Cuckoo table with Zobrist hashes of valid reversible moves
+int16_t cuckooMove[0x2000];     // The move for cuckoo[i]
+#define H1(h)( (h)     &0x1fff) // First hash function for indexing the cuckoo table
+#define H2(h)(((h)>>16)&0x1fff) // Second hash function
+
+
 /// Position::init() initializes at startup the various arrays used to compute
 /// hash keys.
 
@@ -157,6 +165,31 @@ void Position::init() {
 
   Zobrist::side = rng.rand<Key>();
   Zobrist::noPawns = rng.rand<Key>();
+
+  int num = 0;
+  for (Piece pc : Pieces)
+  {
+      for (Square s1 = SQ_A1; s1 <= SQ_H8; ++s1)
+      {
+          Bitboard b = PseudoAttacks[type_of(pc)][s1] & ~(SquareBB[s1]-1);
+          while (b)
+          {
+              Square s2 = pop_lsb(&b);
+              int16_t move16 = make_move(s1, s2);
+              Key moveKey = Zobrist::psq[pc][s1] ^ Zobrist::psq[pc][s2] ^ Zobrist::side;
+              unsigned int i = H1(moveKey);
+              while(true)
+              {   // Insert in cuckoo table
+                  std::swap(cuckoo[i], moveKey);
+                  std::swap(cuckooMove[i], move16);
+                  if (moveKey == 0) break; // Arrived at empty; slot so we are done for this move
+                  i = (i == H1(moveKey)) ? H2(moveKey) : H1(moveKey); // Push victim to alternative slot
+              }
+              num++;
+          }
+      }
+  }
+  assert(num == 3668);
 }
 
 
@@ -1111,8 +1144,7 @@ bool Position::is_draw(int ply) const {
 bool Position::has_repeated() const {
 
     StateInfo* stc = st;
-    while (true)
-    {
+    while (true) {
         int i = 4, e = std::min(stc->rule50, stc->pliesFromNull);
 
         if (e < i)
@@ -1131,6 +1163,53 @@ bool Position::has_repeated() const {
 
         stc = stc->previous;
     }
+}
+
+
+/// Position::has_game_cycle() tests if the position has a move which draws by repetition,
+/// or an earlier position has a move that directly reaches this one.
+
+bool Position::has_game_cycle(int ply) const {
+
+  int end = std::min(st->rule50, st->pliesFromNull);
+
+  if (end < 3)
+    return false;
+
+  Key originalKey = st->key;
+  StateInfo* stp = st->previous;
+  Key progressKey = stp->key ^ Zobrist::side;
+
+  for (int i = 3; i <= end; i += 2)
+  {
+      stp = stp->previous;
+      progressKey ^= stp->key ^ Zobrist::side;
+      stp = stp->previous;
+      // "originalKey ==" detects upcoming repetition, "progressKey ==" detects no-progress
+      if (originalKey == (progressKey ^ stp->key) || progressKey == Zobrist::side)
+      {
+          Key moveKey = originalKey ^ stp->key;
+          unsigned int j = H1(moveKey);
+          if (cuckoo[j] == moveKey || (j = H2(moveKey), cuckoo[j] == moveKey))
+          {
+              Move m = Move(cuckooMove[j]);
+              if (!(between_bb(from_sq(m), to_sq(m)) & pieces())) {
+                  if (ply > i)
+                      return true;
+                  // For repetitions before or at the root, require one more.
+                  StateInfo* next_stp = stp;
+                  for (int k = i+2; k <= end; k += 2)
+                  {
+                      next_stp = next_stp->previous->previous;
+                      if (next_stp->key == stp->key)
+                         return true;
+                  }
+              }
+          }
+      }
+      progressKey ^= stp->key;
+  }
+  return false;
 }
 
 

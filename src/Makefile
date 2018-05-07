@@ -23,10 +23,11 @@
 
 ### Executable name
 ifeq ($(COMP),mingw)
-EXE = stockfish.exe
+EXE = McBrain-91.exe
 else
-EXE = stockfish
+EXE = McBrain-91
 endif
+##### bench nodes:  6045167
 
 ### Installation dir definitions
 PREFIX = /usr/local
@@ -38,7 +39,7 @@ PGOBENCH = ./$(EXE) bench
 ### Object files
 OBJS = benchmark.o bitbase.o bitboard.o endgame.o evaluate.o main.o \
 	material.o misc.o movegen.o movepick.o pawns.o position.o psqt.o \
-	search.o thread.o timeman.o tt.o uci.o ucioption.o syzygy/tbprobe.o
+	search.o thread.o timeman.o tt.o uci.o ucioption.o polybook.o syzygy/tbprobe.o
 
 ### Establish the operating system name
 KERNEL = $(shell uname -s)
@@ -441,7 +442,7 @@ clean: objclean profileclean
 
 # clean binaries and objects
 objclean:
-	@rm -f $(EXE) *.o ./syzygy/*.o
+	@rm -f $(EXE) $(EXE).exe *.o ./syzygy/*.o
 
 # clean auxiliary profiling files
 profileclean:
