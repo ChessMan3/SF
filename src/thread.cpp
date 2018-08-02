@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  ShashChess, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  ShashChess is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  ShashChess is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -98,7 +98,7 @@ void Thread::idle_loop() {
   // some Windows NUMA hardware, for instance in fishtest. To make it simple,
   // just check if running threads are below a threshold, in this case all this
   // NUMA machinery is not needed.
-  if (Options["Threads"] >= 8)
+  if (int(Options["Threads"]) >= 8) //from Sugar
       WinProcGroup::bindThisThread(idx);
 
   while (true)
@@ -153,7 +153,107 @@ void ThreadPool::clear() {
   main()->previousScore = VALUE_INFINITE;
   main()->previousTimeReduction = 1.0;
 }
+//from Shashin
+inline uint8_t getInitialShashinValue() {
+	if (!Options["Tal"] && !Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_POSITION_DEFAULT;
 
+	if (Options["Tal"] && Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_POSITION_TAL_CAPABLANCA;
+
+	if (Options["Tal"] && !Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_POSITION_TAL;
+
+	if (!Options["Tal"] && Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_POSITION_CAPABLANCA;
+
+	if (!Options["Tal"] && Options["Capablanca"]
+			&& Options["Petrosian"])
+		return SHASHIN_POSITION_CAPABLANCA_PETROSIAN;
+
+	if (!Options["Tal"] && !Options["Capablanca"]
+			&& Options["Petrosian"])
+		return SHASHIN_POSITION_PETROSIAN;
+
+	if (Options["Tal"] && Options["Capablanca"]
+			&& Options["Petrosian"])
+		return SHASHIN_POSITION_TAL_CAPABLANCA_PETROSIAN;
+
+	return SHASHIN_POSITION_TAL_PETROSIAN;
+}
+
+inline uint8_t getInitialContemptByShashin() {
+	if (!Options["Tal"] && !Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_DEFAULT_CONTEMPT;
+
+	if (Options["Tal"] && Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_TAL_CAPABLANCA_CONTEMPT;
+
+	if (Options["Tal"] && !Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_TAL_CONTEMPT;
+
+	if (!Options["Tal"] && Options["Capablanca"]
+			&& !Options["Petrosian"])
+		return SHASHIN_CAPABLANCA_CONTEMPT;
+
+	if (!Options["Tal"] && Options["Capablanca"]
+			&& Options["Petrosian"])
+		return SHASHIN_CAPABLANCA_PETROSIAN_CONTEMPT;
+
+	if (!Options["Tal"] && !Options["Capablanca"]
+			&& Options["Petrosian"])
+		return SHASHIN_PETROSIAN_CONTEMPT;
+
+	if (Options["Tal"] && Options["Capablanca"]
+			&& Options["Petrosian"])
+		return SHASHIN_TAL_CAPABLANCA_PETROSIAN_CONTEMPT;
+
+	return SHASHIN_TAL_PETROSIAN_CONTEMPT;
+}
+inline int getInitialShashinKingSafe(){
+    if ((!Options["Tal"] && !Options["Capablanca"]
+		    && !Options["Petrosian"])
+	||
+	(!Options["Tal"] && Options["Capablanca"]
+			    && !Options["Petrosian"]))
+	    return SHASHIN_KING_SAFE_DEFAULT;
+
+    if ((Options["Tal"] && Options["Capablanca"]
+		    && !Options["Petrosian"])
+	||
+	(!Options["Tal"] && Options["Capablanca"]
+			    && Options["Petrosian"]))
+	    return SHASHIN_KING_SAFE_MIDDLE;
+
+    if ((Options["Tal"] && !Options["Capablanca"]
+		    && !Options["Petrosian"])
+	||
+	(Options["Tal"] && Options["Capablanca"]
+			    && Options["Petrosian"])
+	||
+	(!Options["Tal"] && !Options["Capablanca"]
+			    && Options["Petrosian"]))
+	    return SHASHIN_KING_SAFE_MAX;
+    return SHASHIN_KING_SAFE_DEFAULT;
+}
+
+inline int getInitialShashinQuiescent(){
+    if ((!Options["Tal"] && !Options["Capablanca"]
+		    && !Options["Petrosian"])
+	||
+	(!Options["Tal"] && Options["Capablanca"]
+			    && !Options["Petrosian"]))
+	    return 1;
+      return 0;
+}
+//end from Shashin
 /// ThreadPool::start_thinking() wakes up main thread waiting in idle_loop() and
 /// returns immediately. Main thread will wake up other threads and start the search.
 
@@ -161,7 +261,13 @@ void ThreadPool::start_thinking(Position& pos, StateListPtr& states,
                                 const Search::LimitsType& limits, bool ponderMode) {
 
   main()->wait_for_search_finished();
-
+   //from Shashin
+  Search::shashinValue = getInitialShashinValue();
+  Search::shashinContempt = getInitialContemptByShashin();
+  Search::shashinKingSafe=getInitialShashinKingSafe();
+  Search::shashinQuiescentCapablanca=getInitialShashinQuiescent();
+  Search::shashinQuiescentCapablancaMC=getInitialShashinQuiescent();
+  //end from Shashin
   stopOnPonderhit = stop = false;
   ponder = ponderMode;
   Search::Limits = limits;
