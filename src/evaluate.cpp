@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  ShashChess, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  ShashChess is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  ShashChess is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -23,12 +23,20 @@
 #include <cstring>   // For std::memset
 #include <iomanip>
 #include <sstream>
+#include <cmath>
 
 #include "bitboard.h"
 #include "evaluate.h"
 #include "material.h"
 #include "pawns.h"
 #include "thread.h"
+#include "uci.h"
+
+
+//from Shashin
+extern bool pawnsPiecesSpace, passedPawns,initiativeToCalculate;
+extern int uciElo;
+//end from Shashin
 
 namespace Trace {
 
@@ -78,11 +86,32 @@ namespace {
   constexpr Bitboard KingSide    = FileEBB | FileFBB | FileGBB | FileHBB;
   constexpr Bitboard Center      = (FileDBB | FileEBB) & (Rank4BB | Rank5BB);
 
+  //for Shashin Theory
+
+  enum{ MATERIAL_POS, IMBALANCE_POS, PAWN_STRUCTURE_POS, PIECES_POS,
+        MOBILITY_POS, PASSED_PAWNS_POS, KING_SAFETY_POS, THREATS_POS,
+        SPACE_POS, INITIATIVE_POS
+  };
+
+  enum{ POSITIONAL_FACTORS_NUMBER = 10, MAX_FOR_WEIGHT_EG = 110,MAX_FOR_WEIGHT_MG = 105, MIDDLE_FOR_WEIGHT = 100, MIN_FOR_WEIGHT_EG = 90,MIN_FOR_WEIGHT_MG = 95};
+
+  int weightsMG[POSITIONAL_FACTORS_NUMBER]={MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT},
+      weightsEG[POSITIONAL_FACTORS_NUMBER]={MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT,MIDDLE_FOR_WEIGHT};
+
+  //end for Shashin Theory
+
   constexpr Bitboard KingFlank[FILE_NB] = {
     QueenSide ^ FileDBB, QueenSide, QueenSide,
     CenterFiles, CenterFiles,
     KingSide, KingSide, KingSide ^ FileEBB
   };
+ 
+  //from shashin
+  Score apply_weight(Score v, int weightMG,int weightEG) {
+  	return make_score(mg_value(v) * weightMG / MIDDLE_FOR_WEIGHT,
+  			eg_value(v) * weightEG / MIDDLE_FOR_WEIGHT);
+  }
+  //end from shashin
 
   // Threshold for lazy and space evaluation
   constexpr Value LazyThreshold  = Value(1500);
@@ -158,7 +187,7 @@ namespace {
   constexpr Score BishopPawns        = S(  3,  7);
   constexpr Score CloseEnemies       = S(  6,  0);
   constexpr Score CorneredBishop     = S( 50, 50);
-  constexpr Score Hanging            = S( 57, 32);
+  constexpr Score Hanging            = S( 52, 30);
   constexpr Score HinderPassedPawn   = S(  8,  0);
   constexpr Score KingProtector      = S(  6,  6);
   constexpr Score KnightOnQueen      = S( 21, 11);
@@ -166,7 +195,7 @@ namespace {
   constexpr Score MinorBehindPawn    = S( 16,  0);
   constexpr Score Overload           = S( 13,  6);
   constexpr Score PawnlessFlank      = S( 19, 84);
-  constexpr Score RookOnPawn         = S( 10, 30);
+  constexpr Score RookOnPawn         = S(  8, 24);
   constexpr Score SliderOnQueen      = S( 42, 21);
   constexpr Score ThreatByKing       = S( 23, 76);
   constexpr Score ThreatByPawnPush   = S( 45, 40);
@@ -414,7 +443,7 @@ namespace {
 
     const Square ksq = pos.square<KING>(Us);
     Bitboard kingFlank, weak, b, b1, b2, safe, unsafeChecks;
-
+    int kingDanger;//Shashin very good tactical patch
     // King shelter and enemy pawns storm
     Score score = pe->king_safety<Us>(pos, ksq);
 
@@ -429,7 +458,7 @@ namespace {
     // Main king safety evaluation
     if (kingAttackersCount[Them] > 1 - pos.count<QUEEN>(Them))
     {
-        int kingDanger = 0;
+		kingDanger = 0;//Shashin very good tactical patch
         unsafeChecks = 0;
 
         // Attacked squares defended at most once by our queen or king
@@ -484,11 +513,12 @@ namespace {
                      -   30;
 
         // Transform the kingDanger units into a Score, and subtract it from the evaluation
+        int kingSafe = pos.this_thread()->shashinKingSafe;//Shashin very good tactical patch
         if (kingDanger > 0)
         {
             int mobilityDanger = mg_value(mobility[Them] - mobility[Us]);
             kingDanger = std::max(0, kingDanger + mobilityDanger);
-            score -= make_score(kingDanger * kingDanger / 4096, kingDanger / 16);
+            score -= make_score(kingDanger * kingSafe *kingDanger / 4096, kingDanger / 16);
         }
     }
 
@@ -718,13 +748,13 @@ namespace {
   template<Tracing T> template<Color Us>
   Score Evaluation<T>::space() const {
 
-    if (pos.non_pawn_material() < SpaceThreshold)
-        return SCORE_ZERO;
-
     constexpr Color Them = (Us == WHITE ? BLACK : WHITE);
     constexpr Bitboard SpaceMask =
       Us == WHITE ? CenterFiles & (Rank2BB | Rank3BB | Rank4BB)
                   : CenterFiles & (Rank7BB | Rank6BB | Rank5BB);
+
+    if (pos.non_pawn_material() < SpaceThreshold)
+        return SCORE_ZERO;
 
     // Find the available squares for our pieces inside the area defined by SpaceMask
     Bitboard safe =   SpaceMask
@@ -802,7 +832,45 @@ namespace {
 
     return ScaleFactor(sf);
   }
+  //from shashin
+  void setWeightsByShashinValue(uint8_t shashinValue) {
+    if ((shashinValue == SHASHIN_POSITION_CAPABLANCA_PETROSIAN) || (shashinValue == SHASHIN_POSITION_TAL_CAPABLANCA)){
+	  weightsEG[MATERIAL_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsEG[MOBILITY_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsEG[PASSED_PAWNS_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsEG[KING_SAFETY_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsMG[MATERIAL_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsMG[MOBILITY_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsMG[PASSED_PAWNS_POS] = MIDDLE_FOR_WEIGHT;
+	  weightsMG[KING_SAFETY_POS] = MIDDLE_FOR_WEIGHT;
+    }
+    else{
+  	  if ((shashinValue == SHASHIN_POSITION_PETROSIAN) || (shashinValue == SHASHIN_POSITION_TAL) || (shashinValue == SHASHIN_POSITION_TAL_PETROSIAN)) {
+		  weightsEG[MATERIAL_POS] = MIN_FOR_WEIGHT_EG;
+		  weightsEG[MOBILITY_POS] = MAX_FOR_WEIGHT_EG ;
+		  weightsEG[PASSED_PAWNS_POS] = MIN_FOR_WEIGHT_EG;
+		  weightsEG[KING_SAFETY_POS] = MAX_FOR_WEIGHT_EG ;
+		  weightsMG[MATERIAL_POS] = MIN_FOR_WEIGHT_MG;
+		  weightsMG[MOBILITY_POS] = MAX_FOR_WEIGHT_MG ;
+		  weightsMG[PASSED_PAWNS_POS] = MIN_FOR_WEIGHT_MG;
+		  weightsMG[KING_SAFETY_POS] = MAX_FOR_WEIGHT_MG ;
 
+  	  }
+  	  else {
+  		  if ((shashinValue == SHASHIN_POSITION_DEFAULT) ||(shashinValue == SHASHIN_POSITION_CAPABLANCA) || (shashinValue == SHASHIN_POSITION_TAL_CAPABLANCA_PETROSIAN)) {
+			  weightsEG[MATERIAL_POS] = MAX_FOR_WEIGHT_EG ;
+			  weightsEG[MOBILITY_POS] = MIN_FOR_WEIGHT_EG;
+			  weightsEG[PASSED_PAWNS_POS] = MAX_FOR_WEIGHT_EG ;
+			  weightsEG[KING_SAFETY_POS] = MIN_FOR_WEIGHT_EG;
+			  weightsMG[MATERIAL_POS] = MAX_FOR_WEIGHT_MG ;
+			  weightsMG[MOBILITY_POS] = MIN_FOR_WEIGHT_MG;
+			  weightsMG[PASSED_PAWNS_POS] = MAX_FOR_WEIGHT_MG ;
+			  weightsMG[KING_SAFETY_POS] = MIN_FOR_WEIGHT_MG;
+  		  }
+  	  }
+    }
+  }
+  //end from shashin
 
   // Evaluation::value() is the main function of the class. It computes the various
   // parts of the evaluation and returns the value of the position from the point
@@ -812,7 +880,7 @@ namespace {
   Value Evaluation<T>::value() {
 
     assert(!pos.checkers());
-
+    setWeightsByShashinValue(pos.this_thread()->shashinValue); //from shashin
     // Probe the material hash table
     me = Material::probe(pos);
 
@@ -824,36 +892,37 @@ namespace {
     // Initialize score by reading the incrementally updated scores included in
     // the position object (material + piece square tables) and the material
     // imbalance. Score is computed internally from the white point of view.
-    Score score = pos.psq_score() + me->imbalance() + pos.this_thread()->contempt;
-
+    Score score =   apply_weight(pos.psq_score(), weightsMG[MATERIAL_POS],weightsEG[MATERIAL_POS]) + apply_weight(me->imbalance(),weightsMG[IMBALANCE_POS],weightsEG[IMBALANCE_POS]) + pos.this_thread()->contempt;
     // Probe the pawn hash table
     pe = Pawns::probe(pos);
-    score += pe->pawn_score(WHITE) - pe->pawn_score(BLACK);
+    if (pawnsPiecesSpace){
+      score += apply_weight(pe->pawn_score(WHITE) - pe->pawn_score(BLACK),weightsMG[PAWN_STRUCTURE_POS],weightsEG[PAWN_STRUCTURE_POS]);   
+    }
+  // Early exit if score is high
+  Value v = (mg_value(score) + eg_value(score)) / 2;
+  if (abs(v) > LazyThreshold)
+     return pos.side_to_move() == WHITE ? v : -v;
 
-    // Early exit if score is high
-    Value v = (mg_value(score) + eg_value(score)) / 2;
-    if (abs(v) > LazyThreshold)
-       return pos.side_to_move() == WHITE ? v : -v;
+  // Main evaluation begins here
 
-    // Main evaluation begins here
+  initialize<WHITE>();
+  initialize<BLACK>();
 
-    initialize<WHITE>();
-    initialize<BLACK>();
-
-    // Pieces should be evaluated first (populate attack tables)
-    score +=  pieces<WHITE, KNIGHT>() - pieces<BLACK, KNIGHT>()
-            + pieces<WHITE, BISHOP>() - pieces<BLACK, BISHOP>()
-            + pieces<WHITE, ROOK  >() - pieces<BLACK, ROOK  >()
-            + pieces<WHITE, QUEEN >() - pieces<BLACK, QUEEN >();
-
-    score += mobility[WHITE] - mobility[BLACK];
-
-    score +=  king<   WHITE>() - king<   BLACK>()
-            + threats<WHITE>() - threats<BLACK>()
-            + passed< WHITE>() - passed< BLACK>()
-            + space<  WHITE>() - space<  BLACK>();
-
-    score += initiative(eg_value(score));
+  // Pieces should be evaluated first (populate attack tables)
+  if(pawnsPiecesSpace){
+    score +=  apply_weight(pieces<WHITE, KNIGHT>() - pieces<BLACK, KNIGHT>()
+	    + pieces<WHITE, BISHOP>() - pieces<BLACK, BISHOP>()
+	    + pieces<WHITE, ROOK  >() - pieces<BLACK, ROOK  >()
+	    + pieces<WHITE, QUEEN >() - pieces<BLACK, QUEEN >(),weightsMG[PIECES_POS],weightsEG[PIECES_POS]);
+  }
+    score += apply_weight(mobility[WHITE] - mobility[BLACK],weightsMG[MOBILITY_POS],weightsEG[MOBILITY_POS]);
+    score +=  apply_weight(Score(int(double(king<   WHITE>() - king<   BLACK>()))),weightsMG[KING_SAFETY_POS],weightsEG[KING_SAFETY_POS]); //from Sugar
+    score += apply_weight(threats<WHITE>() - threats<BLACK>(),weightsMG[THREATS_POS],weightsEG[THREATS_POS]);
+    score += apply_weight(Score(int(double(passed< WHITE>() - passed< BLACK>()))),weightsMG[PASSED_PAWNS_POS],weightsEG[PASSED_PAWNS_POS]); //from Sugar
+    if(pawnsPiecesSpace)
+      score += apply_weight(space<  WHITE>() - space<  BLACK>(),weightsMG[SPACE_POS],weightsEG[SPACE_POS]);
+    if(initiativeToCalculate)
+      score += apply_weight(initiative(eg_value(score)),weightsMG[INITIATIVE_POS],weightsEG[INITIATIVE_POS]);
 
     // Interpolate between a middlegame and a (scaled by 'sf') endgame score
     ScaleFactor sf = scale_factor(eg_value(score));

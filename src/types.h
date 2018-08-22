@@ -1,15 +1,15 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  ShashChess, a UCI chess playing engine derived from Stockfish
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
   Copyright (C) 2015-2018 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
 
-  Stockfish is free software: you can redistribute it and/or modify
+  ShashChess is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Stockfish is distributed in the hope that it will be useful,
+  ShashChess is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
@@ -175,6 +175,7 @@ enum Value : int {
   VALUE_ZERO      = 0,
   VALUE_DRAW      = 0,
   VALUE_KNOWN_WIN = 10000,
+  VALUE_TB_WIN    = 24240,
   VALUE_MATE      = 32000,
   VALUE_INFINITE  = 32001,
   VALUE_NONE      = 32002,
@@ -182,11 +183,11 @@ enum Value : int {
   VALUE_MATE_IN_MAX_PLY  =  VALUE_MATE - 2 * MAX_PLY,
   VALUE_MATED_IN_MAX_PLY = -VALUE_MATE + 2 * MAX_PLY,
 
-  PawnValueMg   = 142,   PawnValueEg   = 207,
-  KnightValueMg = 784,   KnightValueEg = 868,
-  BishopValueMg = 828,   BishopValueEg = 916,
-  RookValueMg   = 1286,  RookValueEg   = 1378,
-  QueenValueMg  = 2528,  QueenValueEg  = 2698,
+  PawnValueMg   = 171,   PawnValueEg   = 240,
+  KnightValueMg = 764,   KnightValueEg = 848,
+  BishopValueMg = 826,   BishopValueEg = 891,
+  RookValueMg   = 1282,  RookValueEg   = 1373,
+  QueenValueMg  = 2500,  QueenValueEg  = 2670,
 
   MidgameLimit  = 15258, EndgameLimit  = 3915
 };
@@ -254,6 +255,32 @@ enum File : int {
 enum Rank : int {
   RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8, RANK_NB
 };
+
+//Shashin section
+
+//For tactical
+enum {
+  SHASHIN_KING_SAFE_DEFAULT = 1,SHASHIN_KING_SAFE_SCORE_THRESHOLD_MIN = 140, SHASHIN_KING_SAFE_MAX = 5, SHASHIN_KING_SAFE_MIDDLE = 3,
+  SHASHIN_SCORE_KING_SAFE_RATE = 15, SHASHIN_MAX_SCORE_FOR_KING_SAFE_RATE = 125 };
+//Various contempt to adapt eventually
+enum {
+  SHASHIN_DEFAULT_CONTEMPT = 21, SHASHIN_PETROSIAN_CONTEMPT = 11, SHASHIN_CAPABLANCA_CONTEMPT = 21, SHASHIN_CAPABLANCA_PETROSIAN_CONTEMPT = 16,
+  SHASHIN_TAL_CONTEMPT = 31, SHASHIN_TAL_PETROSIAN_CONTEMPT = 21, SHASHIN_TAL_CAPABLANCA_CONTEMPT = 26, SHASHIN_TAL_CAPABLANCA_PETROSIAN_CONTEMPT = 21,
+  SHASHIN_MAX_SCORE = 200,SHASHIN_MIDDLE_HIGH_SCORE = 140,SHASHIN_MIDDLE_LOW_SCORE = 70, SHASHIN_LOW_SCORE=25};
+//Positions-algorithms types
+enum {
+  SHASHIN_POSITION_DEFAULT, SHASHIN_POSITION_PETROSIAN, SHASHIN_POSITION_CAPABLANCA, SHASHIN_POSITION_CAPABLANCA_PETROSIAN,
+  SHASHIN_POSITION_TAL,SHASHIN_POSITION_TAL_PETROSIAN,SHASHIN_POSITION_TAL_CAPABLANCA,SHASHIN_POSITION_TAL_CAPABLANCA_PETROSIAN
+};
+//thresholds to adapt eventually
+/*
+ * -25 25 =   => -35 15 35
+ * -70 70 leggero (s)vantaggio  => -80 70 80
+ * -140 140 (s)vantaggio => -150 140 150
+ * */
+enum { SHASHIN_TAL_THRESHOLD = 35, SHASHIN_CAPABLANCA_THRESHOLD = 15 };
+
+//End Shashin section
 
 
 /// Score enum stores a middlegame and an endgame value in a single integer (enum).
